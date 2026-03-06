@@ -43,7 +43,7 @@ SUPABASE_SECRET_KEY=sb_secret_xxx
 - User role loaded from `public.users` profile row.
 
 ### App-level authorization
-- **Player:** create/view/edit/delete only their own character sheets.
+- **Player:** create/view/edit/delete only their own character sheets. Active/inactive state can only be toggled by the DM.
 - **DM:** view/edit/delete all character sheets; create/view/edit/delete NPC sheets.
 
 ### Database + RLS
@@ -59,7 +59,7 @@ SUPABASE_SECRET_KEY=sb_secret_xxx
 
 ### Storage uploads
 - Character and NPC image upload functions in `src/storage/imageUpload.ts`.
-- Updates both sheet image URL and `public.images` metadata.
+- Stores the storage path on the sheet record and keeps `public.images` metadata for ownership/audit.
 
 ## Services / API-style functions
 
@@ -95,5 +95,4 @@ NPC functions:
 If local `psql` is unavailable, use one of these:
 
 1. **Supabase SQL Editor**: run `src/database/migrations.sql` directly in dashboard.
-2. **GitHub Action**: use `.github/workflows/migrate-supabase.yml` with secret `SUPABASE_DB_URL`.
-3. **CLI command** documented in `scripts/run-migration.md`.
+2. **CLI command** documented in `scripts/run-migration.md`.

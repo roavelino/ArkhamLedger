@@ -1,8 +1,15 @@
+import { createRuntimeBrowserClient } from './browser/supabaseBrowserClient.js';
+import {
+  createSignedSheetImageUrl,
+  deleteCharacterSheet,
+  fetchProfile,
+  listCharacterSheets,
+  updateCharacterSheetImage,
+  uploadCharacterSheetImage,
+  upsertCharacterSheet
+} from './browser/characterSheetsApi.js';
+
 const STORAGE_KEY = 'arkham-ledger:sheets:v1';
-const env = globalThis.ARKHAM_ENV || {};
-const SUPABASE_URL = String(env.SUPABASE_URL || '').trim();
-const SUPABASE_PUBLISHABLE_KEY = String(env.SUPABASE_PUBLISHABLE_KEY || '').trim();
-const createClient = globalThis.supabase?.createClient;
 
 const state = {
   sheets: [],
@@ -44,23 +51,12 @@ const el = {
 void initialize();
 
 async function initialize() {
-  if (!createClient) {
-    setStatus('Supabase SDK local nao carregado');
+  try {
+    state.sync.client = createRuntimeBrowserClient();
+  } catch (error) {
+    setStatus(error?.message || 'Supabase nao configurado');
     return;
   }
-
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    setStatus('Supabase nao configurado');
-    return;
-  }
-
-  state.sync.client = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
 
   const {
     data: { session }
@@ -231,25 +227,12 @@ function bindEvents() {
 }
 
 async function loadProfile() {
-  const { data, error } = await state.sync.client
-    .from('users')
-    .select('id, role, display_name')
-    .eq('id', state.sync.user.id)
-    .single();
-
-  if (error) throw new Error(error.message);
-  state.sync.profile = data;
+  state.sync.profile = await fetchProfile(state.sync.client, state.sync.user.id);
 }
 
 async function loadSheetsFromSupabase() {
-  const { data, error } = await state.sync.client
-    .from('character_sheets')
-    .select('*')
-    .order('updated_at', { ascending: false });
-
-  if (error) throw new Error(error.message);
-
-  state.sheets = (data || []).map(deserializeSheet);
+  const rows = await listCharacterSheets(state.sync.client);
+  state.sheets = rows.map(deserializeSheet);
   state.selectedId = state.sheets[0]?.id || null;
   state.dirty = false;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
@@ -310,6 +293,15 @@ function renderSheet() {
     <div class="sheet-body">
       <section class="section">
         <h3>Dados Principais</h3>
+        <div class="portrait-panel">
+          <div class="portrait-preview">
+            ${renderSheetImage(selected)}
+          </div>
+          <div class="portrait-actions">
+            ${editable ? '<div class="field"><label>Foto do investigador</label><input id="fieldImage" type="file" accept="image/*"></div>' : ''}
+            <div class="helper">A imagem e enviada ao Supabase somente ao clicar em salvar.</div>
+          </div>
+        </div>
         <div class="grid-2">
           <div class="field"><label>Nome</label><input id="fieldName" value="${escapeHtml(selected.name)}" ${disabled}></div>
           <div class="field"><label>Ocupacao</label><input id="fieldOccupation" value="${escapeHtml(selected.occupation)}" ${disabled}></div>
@@ -356,6 +348,22 @@ function bindSheetFields(sheetId) {
   bind('fieldAge', 'age', (v) => Number(v || 0));
   bind('fieldNotes', 'notes');
 
+  const imageInput = document.getElementById('fieldImage');
+  imageInput?.addEventListener('change', () => {
+    const file = imageInput.files?.[0];
+    if (!file) return;
+
+    const sheet = state.sheets.find((s) => s.id === sheetId);
+    if (!sheet) return;
+
+    setSheetPreviewUrl(sheet, URL.createObjectURL(file));
+    sheet.pendingImageFile = file;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    updateTags();
+    render();
+  });
+
   for (const skillInput of document.querySelectorAll('[data-skill-value]')) {
     skillInput.addEventListener('input', () => {
       const sheet = state.sheets.find((s) => s.id === sheetId);
@@ -397,23 +405,29 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
 
   try {
     const payload = serializeSheet(selected, state.sync.user.id);
-    const { error, data } = await state.sync.client
-      .from('character_sheets')
-      .upsert(payload, { onConflict: 'id' })
-      .select('*')
-      .single();
+    let refreshed = deserializeSheet(await upsertCharacterSheet(state.sync.client, payload));
 
-    if (error) throw error;
+    if (selected.pendingImageFile) {
+      const imagePath = await uploadCharacterSheetImage(
+        state.sync.client,
+        refreshed.ownerId || state.sync.user.id,
+        refreshed.id,
+        selected.pendingImageFile
+      );
+      refreshed = deserializeSheet(await updateCharacterSheetImage(state.sync.client, refreshed.id, imagePath));
+      selected.pendingImageFile = null;
+    }
 
-    const refreshed = deserializeSheet(data);
     const index = state.sheets.findIndex((item) => item.id === refreshed.id);
     if (index >= 0) {
+      releasePreviewUrl(state.sheets[index]);
       state.sheets[index] = refreshed;
     } else {
       state.sheets.unshift(refreshed);
       state.selectedId = refreshed.id;
     }
 
+    await ensureSheetImageUrl(refreshed);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
     state.dirty = false;
     showToast(successMessage);
@@ -424,8 +438,7 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
 }
 
 async function deleteRemoteSheet(sheetId) {
-  const { error } = await state.sync.client.from('character_sheets').delete().eq('id', sheetId);
-  if (error) throw error;
+  await deleteCharacterSheet(state.sync.client, sheetId);
 }
 
 function applyRoleVisibility() {
@@ -476,7 +489,7 @@ function isOwnedByCurrentUser(sheet) {
 function canEditSheet(sheet) {
   if (!sheet || !state.sync.connected) return false;
   if (isCurrentUserDm()) return true;
-  return isOwnedByCurrentUser(sheet) && sheet.isActive;
+  return isOwnedByCurrentUser(sheet);
 }
 
 function playerHasActiveCharacter() {
@@ -519,6 +532,7 @@ function serializeSheet(sheet, userId) {
     owner_id: sheet.ownerId || userId,
     name: sheet.name,
     is_active: sheet.isActive !== false,
+    image_url: sheet.imagePath || null,
     sheet_data: {
       occupation: sheet.occupation,
       home: sheet.home,
@@ -536,6 +550,10 @@ function deserializeSheet(row) {
     ownerId: typeof row.owner_id === 'string' ? row.owner_id : null,
     name: String(row.name || 'Novo Investigador'),
     isActive: row.is_active !== false,
+    imagePath: typeof row.image_url === 'string' ? row.image_url : null,
+    imageSignedUrl: null,
+    imagePreviewUrl: null,
+    pendingImageFile: null,
     occupation: String(data.occupation || 'Sem ocupacao'),
     home: String(data.home || 'Arkham'),
     age: Number(data.age || 30),
@@ -555,6 +573,10 @@ function normalizeImportedSheets(data, fallbackOwnerId) {
       ownerId: typeof item.ownerId === 'string' ? item.ownerId : fallbackOwnerId,
       name: String(item.name || 'Novo Investigador'),
       isActive: item.isActive !== false,
+      imagePath: typeof item.imagePath === 'string' ? item.imagePath : null,
+      imageSignedUrl: null,
+      imagePreviewUrl: null,
+      pendingImageFile: null,
       occupation: String(item.occupation || 'Sem ocupacao'),
       home: String(item.home || 'Arkham'),
       age: Number(item.age || 30),
@@ -572,6 +594,10 @@ function createBlankSheet(ownerId) {
     ownerId,
     name: 'Novo Investigador',
     isActive: true,
+    imagePath: null,
+    imageSignedUrl: null,
+    imagePreviewUrl: null,
+    pendingImageFile: null,
     occupation: 'Antiquario',
     home: 'Arkham',
     age: 32,
@@ -679,6 +705,46 @@ function showToast(message) {
 }
 showToast.timer = 0;
 
+function renderSheetImage(sheet) {
+  const imageUrl = sheet.imagePreviewUrl || sheet.imageSignedUrl;
+
+  if (sheet.imagePath && !imageUrl) {
+    void ensureSheetImageUrl(sheet);
+  }
+
+  if (!imageUrl) {
+    return '<span>Sem retrato cadastrado</span>';
+  }
+
+  return `<img src="${escapeAttribute(imageUrl)}" alt="Retrato de ${escapeAttribute(sheet.name)}">`;
+}
+
+async function ensureSheetImageUrl(sheet) {
+  if (!sheet?.imagePath || sheet.imagePreviewUrl || sheet.imageSignedUrl || !state.sync.client) return;
+
+  try {
+    sheet.imageSignedUrl = await createSignedSheetImageUrl(state.sync.client, sheet.imagePath, 3600);
+  } catch {
+    return;
+  }
+
+  if (sheet.id === state.selectedId) render();
+}
+
+function setSheetPreviewUrl(sheet, nextUrl) {
+  releasePreviewUrl(sheet);
+  sheet.imagePreviewUrl = nextUrl;
+}
+
+function releasePreviewUrl(sheet) {
+  if (sheet?.imagePreviewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(sheet.imagePreviewUrl);
+  }
+  if (sheet) {
+    sheet.imagePreviewUrl = null;
+  }
+}
+
 function downloadJson(fileName, payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -704,4 +770,8 @@ function escapeHtml(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/'/g, '&#39;');
 }

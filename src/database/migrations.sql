@@ -45,11 +45,14 @@ create table if not exists public.images (
   sheet_type text not null check (sheet_type in ('character', 'npc')),
   sheet_id uuid not null,
   storage_path text not null,
-  public_url text not null,
+  public_url text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now()),
   unique (sheet_type, sheet_id)
 );
+
+alter table public.images
+alter column public_url drop not null;
 
 create index if not exists idx_character_sheets_owner_id on public.character_sheets(owner_id);
 create index if not exists idx_character_sheets_updated_at on public.character_sheets(updated_at desc);
@@ -216,12 +219,12 @@ create policy "character_insert_owner_or_dm"
 
 create policy "character_update_owner_or_dm"
   on public.character_sheets for update
-  using (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true))
-  with check (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true));
+  using (public.is_dm(auth.uid()) or owner_id = auth.uid())
+  with check (public.is_dm(auth.uid()) or owner_id = auth.uid());
 
 create policy "character_delete_owner_or_dm"
   on public.character_sheets for delete
-  using (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  using (public.is_dm(auth.uid()) or owner_id = auth.uid());
 
 -- npc_sheets policies (DM only)
 create policy "npc_select_dm"

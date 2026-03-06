@@ -21,6 +21,7 @@ test('rls enabled and policies exist', () => {
   assert.equal(includes('alter table public.npc_sheets enable row level security'), true);
   assert.equal(includes('alter table public.images enable row level security'), true);
   assert.equal(includes('create policy "character_select_owner_or_dm"'), true);
+  assert.equal(includes('create policy "character_delete_owner_or_dm"'), true);
   assert.equal(includes('create policy "npc_select_dm"'), true);
   assert.equal(includes('create policy "images_insert_owner_or_dm"'), true);
 });
