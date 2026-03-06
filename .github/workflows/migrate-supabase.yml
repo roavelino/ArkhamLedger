@@ -23,13 +23,15 @@ jobs:
       - name: Verify required secret
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL_POOLER: ${{ secrets.SUPABASE_DB_URL_POOLER }}
         run: |
           set -euo pipefail
-          test -n "$SUPABASE_DB_URL"
+          test -n "${SUPABASE_DB_URL:-}" || test -n "${SUPABASE_DB_URL_POOLER:-}"
 
-      - name: Build IPv4-safe DB URL
+      - name: Select effective DB URL
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL_POOLER: ${{ secrets.SUPABASE_DB_URL_POOLER }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -37,38 +39,50 @@ jobs:
           import socket
           import urllib.parse
 
-          raw = os.environ["SUPABASE_DB_URL"]
-          parsed = urllib.parse.urlsplit(raw)
-          if not parsed.hostname:
-            raise SystemExit("SUPABASE_DB_URL is missing hostname")
+          pooler = os.environ.get("SUPABASE_DB_URL_POOLER", "").strip()
+          direct = os.environ.get("SUPABASE_DB_URL", "").strip()
 
-          # Resolve IPv4 explicitly to avoid IPv6-only routing failures on some runners.
-          infos = socket.getaddrinfo(parsed.hostname, parsed.port or 5432, socket.AF_INET, socket.SOCK_STREAM)
-          if not infos:
-            raise SystemExit(f"Could not resolve IPv4 address for {parsed.hostname}")
-          ipv4 = infos[0][4][0]
+          if pooler:
+            selected = pooler
+            print("Using SUPABASE_DB_URL_POOLER")
+          elif direct:
+            parsed = urllib.parse.urlsplit(direct)
+            if not parsed.hostname:
+              raise SystemExit("SUPABASE_DB_URL is missing hostname")
 
-          query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-          query["hostaddr"] = [ipv4]
-          query.setdefault("sslmode", ["require"])
-          new_query = urllib.parse.urlencode(query, doseq=True)
-          safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            query.setdefault("sslmode", ["require"])
+
+            try:
+              infos = socket.getaddrinfo(parsed.hostname, parsed.port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+              if infos:
+                ipv4 = infos[0][4][0]
+                query["hostaddr"] = [ipv4]
+                print(f"Using IPv4 {ipv4} for {parsed.hostname}")
+            except socket.gaierror:
+              # Host may be IPv6-only from this runner perspective.
+              # Keep direct URL and let psql attempt; users can set SUPABASE_DB_URL_POOLER for reliable IPv4 path.
+              print(f"IPv4 not found for {parsed.hostname}; using direct DB URL")
+
+            new_query = urllib.parse.urlencode(query, doseq=True)
+            selected = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+          else:
+            raise SystemExit("Neither SUPABASE_DB_URL nor SUPABASE_DB_URL_POOLER is configured")
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-            f.write(f"SUPABASE_DB_URL_IPV4={safe_url}\n")
-          print(f"Using IPv4 {ipv4} for {parsed.hostname}")
+            f.write(f"SUPABASE_DB_URL_EFFECTIVE={selected}\n")
           PY
 
       - name: Apply baseline migration
         env:
-          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_IPV4 }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_EFFECTIVE }}
         run: |
           set -euo pipefail
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations.sql
 
       - name: Apply character state migration
         env:
-          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_IPV4 }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_EFFECTIVE }}
         run: |
           set -euo pipefail
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations_character_state.sql
