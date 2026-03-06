@@ -1,19 +1,11 @@
-import { bindLoginActions } from './auth/login.ts';
-import { initCharacterController } from './characters/characterController.ts';
-import { createNpcController } from './npcs/npcController.ts';
+import { bootstrapSession } from './auth/login.js';
 
-export function bootstrapApp() {
-  bindLoginActions();
-  createNpcController().bind();
-  initCharacterController();
-
-  const closeButtons = document.querySelectorAll('[data-close-roll]');
-  closeButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      const dialog = document.getElementById('rollDialog');
-      if (dialog && typeof dialog.close === 'function') dialog.close();
-    });
-  });
+async function initializeApp() {
+  try {
+    await bootstrapSession();
+  } catch (error) {
+    console.error('Failed to bootstrap Supabase session:', error);
+  }
 }
 
-bootstrapApp();
+void initializeApp();
