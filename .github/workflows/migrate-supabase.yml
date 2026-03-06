@@ -27,16 +27,48 @@ jobs:
           set -euo pipefail
           test -n "$SUPABASE_DB_URL"
 
-      - name: Apply baseline migration
+      - name: Build IPv4-safe DB URL
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import socket
+          import urllib.parse
+
+          raw = os.environ["SUPABASE_DB_URL"]
+          parsed = urllib.parse.urlsplit(raw)
+          if not parsed.hostname:
+            raise SystemExit("SUPABASE_DB_URL is missing hostname")
+
+          # Resolve IPv4 explicitly to avoid IPv6-only routing failures on some runners.
+          infos = socket.getaddrinfo(parsed.hostname, parsed.port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+          if not infos:
+            raise SystemExit(f"Could not resolve IPv4 address for {parsed.hostname}")
+          ipv4 = infos[0][4][0]
+
+          query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+          query["hostaddr"] = [ipv4]
+          query.setdefault("sslmode", ["require"])
+          new_query = urllib.parse.urlencode(query, doseq=True)
+          safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+            f.write(f"SUPABASE_DB_URL_IPV4={safe_url}\n")
+          print(f"Using IPv4 {ipv4} for {parsed.hostname}")
+          PY
+
+      - name: Apply baseline migration
+        env:
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_IPV4 }}
         run: |
           set -euo pipefail
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations.sql
 
       - name: Apply character state migration
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_IPV4 }}
         run: |
           set -euo pipefail
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations_character_state.sql
