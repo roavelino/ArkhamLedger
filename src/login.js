@@ -1,8 +1,9 @@
 import { authErrorToMessage, signinSuccessMessage, signupSuccessMessage } from './auth/authFeedback.js';
+import { getRuntimeSupabaseConfig } from './runtimeConfig.js';
 
-const env = globalThis.ARKHAM_ENV || {};
-const SUPABASE_URL = String(env.SUPABASE_URL || '').trim();
-const SUPABASE_PUBLISHABLE_KEY = String(env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+const runtimeConfig = getRuntimeSupabaseConfig();
+const SUPABASE_URL = runtimeConfig.url;
+const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.publishableKey;
 const createClient = globalThis.supabase?.createClient;
 
 const el = {
@@ -25,7 +26,7 @@ async function initialize() {
   }
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    showMessage('Configuracao do Supabase ausente em env.js.', 'error');
+    showMessage('Configuracao do Supabase ausente no HTML.', 'error');
     return;
   }
 

@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="supabase-url" content="__SUPABASE_URL__" />
+  <meta name="supabase-publishable-key" content="__SUPABASE_PUBLISHABLE_KEY__" />
   <title>Arkham Ledger | Login</title>
   <style>
     :root{
@@ -69,6 +71,7 @@
       background:linear-gradient(180deg,#3b3022,#2e261c);
       cursor:pointer;
       font:inherit;
+      margin-top:8px;
     }
     .message{
       min-height:20px;
@@ -133,7 +136,6 @@
     </section>
   </main>
 
-  <script src="./env.js"></script>
   <script src="./src/vendor/supabase.umd.js"></script>
   <script type="module" src="./src/login.js"></script>
 </body>

@@ -1,7 +1,9 @@
+import { getRuntimeSupabaseConfig } from './runtimeConfig.js';
+
 const STORAGE_KEY = 'arkham-ledger:sheets:v1';
-const env = globalThis.ARKHAM_ENV || {};
-const SUPABASE_URL = String(env.SUPABASE_URL || '').trim();
-const SUPABASE_PUBLISHABLE_KEY = String(env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+const runtimeConfig = getRuntimeSupabaseConfig();
+const SUPABASE_URL = runtimeConfig.url;
+const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.publishableKey;
 const createClient = globalThis.supabase?.createClient;
 
 const state = {
@@ -310,6 +312,15 @@ function renderSheet() {
     <div class="sheet-body">
       <section class="section">
         <h3>Dados Principais</h3>
+        <div class="portrait-panel">
+          <div class="portrait-preview">
+            ${renderSheetImage(selected)}
+          </div>
+          <div class="portrait-actions">
+            ${editable ? '<div class="field"><label>Foto do investigador</label><input id="fieldImage" type="file" accept="image/*"></div>' : ''}
+            <div class="helper">A imagem e enviada ao Supabase somente ao clicar em salvar.</div>
+          </div>
+        </div>
         <div class="grid-2">
           <div class="field"><label>Nome</label><input id="fieldName" value="${escapeHtml(selected.name)}" ${disabled}></div>
           <div class="field"><label>Ocupacao</label><input id="fieldOccupation" value="${escapeHtml(selected.occupation)}" ${disabled}></div>
@@ -355,6 +366,22 @@ function bindSheetFields(sheetId) {
   bind('fieldHome', 'home');
   bind('fieldAge', 'age', (v) => Number(v || 0));
   bind('fieldNotes', 'notes');
+
+  const imageInput = document.getElementById('fieldImage');
+  imageInput?.addEventListener('change', () => {
+    const file = imageInput.files?.[0];
+    if (!file) return;
+
+    const sheet = state.sheets.find((s) => s.id === sheetId);
+    if (!sheet) return;
+
+    setSheetPreviewUrl(sheet, URL.createObjectURL(file));
+    sheet.pendingImageFile = file;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    updateTags();
+    render();
+  });
 
   for (const skillInput of document.querySelectorAll('[data-skill-value]')) {
     skillInput.addEventListener('input', () => {
@@ -405,15 +432,33 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
 
     if (error) throw error;
 
-    const refreshed = deserializeSheet(data);
+    let refreshed = deserializeSheet(data);
+
+    if (selected.pendingImageFile) {
+      const imagePath = await uploadSheetImage(refreshed.id, refreshed.ownerId || state.sync.user.id, selected.pendingImageFile);
+      const imageResult = await state.sync.client
+        .from('character_sheets')
+        .update({ image_url: imagePath })
+        .eq('id', refreshed.id)
+        .select('*')
+        .single();
+
+      if (imageResult.error) throw imageResult.error;
+
+      refreshed = deserializeSheet(imageResult.data);
+      selected.pendingImageFile = null;
+    }
+
     const index = state.sheets.findIndex((item) => item.id === refreshed.id);
     if (index >= 0) {
+      releasePreviewUrl(state.sheets[index]);
       state.sheets[index] = refreshed;
     } else {
       state.sheets.unshift(refreshed);
       state.selectedId = refreshed.id;
     }
 
+    await ensureSheetImageUrl(refreshed);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
     state.dirty = false;
     showToast(successMessage);
@@ -519,6 +564,7 @@ function serializeSheet(sheet, userId) {
     owner_id: sheet.ownerId || userId,
     name: sheet.name,
     is_active: sheet.isActive !== false,
+    image_url: sheet.imagePath || null,
     sheet_data: {
       occupation: sheet.occupation,
       home: sheet.home,
@@ -536,6 +582,10 @@ function deserializeSheet(row) {
     ownerId: typeof row.owner_id === 'string' ? row.owner_id : null,
     name: String(row.name || 'Novo Investigador'),
     isActive: row.is_active !== false,
+    imagePath: typeof row.image_url === 'string' ? row.image_url : null,
+    imageSignedUrl: null,
+    imagePreviewUrl: null,
+    pendingImageFile: null,
     occupation: String(data.occupation || 'Sem ocupacao'),
     home: String(data.home || 'Arkham'),
     age: Number(data.age || 30),
@@ -555,6 +605,10 @@ function normalizeImportedSheets(data, fallbackOwnerId) {
       ownerId: typeof item.ownerId === 'string' ? item.ownerId : fallbackOwnerId,
       name: String(item.name || 'Novo Investigador'),
       isActive: item.isActive !== false,
+      imagePath: typeof item.imagePath === 'string' ? item.imagePath : null,
+      imageSignedUrl: null,
+      imagePreviewUrl: null,
+      pendingImageFile: null,
       occupation: String(item.occupation || 'Sem ocupacao'),
       home: String(item.home || 'Arkham'),
       age: Number(item.age || 30),
@@ -572,6 +626,10 @@ function createBlankSheet(ownerId) {
     ownerId,
     name: 'Novo Investigador',
     isActive: true,
+    imagePath: null,
+    imageSignedUrl: null,
+    imagePreviewUrl: null,
+    pendingImageFile: null,
     occupation: 'Antiquario',
     home: 'Arkham',
     age: 32,
@@ -679,6 +737,62 @@ function showToast(message) {
 }
 showToast.timer = 0;
 
+function renderSheetImage(sheet) {
+  const imageUrl = sheet.imagePreviewUrl || sheet.imageSignedUrl;
+
+  if (sheet.imagePath && !imageUrl) {
+    void ensureSheetImageUrl(sheet);
+  }
+
+  if (!imageUrl) {
+    return '<span>Sem retrato cadastrado</span>';
+  }
+
+  return `<img src="${escapeAttribute(imageUrl)}" alt="Retrato de ${escapeAttribute(sheet.name)}">`;
+}
+
+async function ensureSheetImageUrl(sheet) {
+  if (!sheet?.imagePath || sheet.imagePreviewUrl || sheet.imageSignedUrl || !state.sync.client) return;
+
+  if (/^https?:\/\//i.test(sheet.imagePath)) {
+    sheet.imageSignedUrl = sheet.imagePath;
+    if (sheet.id === state.selectedId) render();
+    return;
+  }
+
+  const { data, error } = await state.sync.client.storage.from('sheet-images').createSignedUrl(sheet.imagePath, 3600);
+  if (error || !data?.signedUrl) return;
+
+  sheet.imageSignedUrl = data.signedUrl;
+  if (sheet.id === state.selectedId) render();
+}
+
+async function uploadSheetImage(sheetId, ownerId, file) {
+  const extension = String(file.name.split('.').pop() || 'bin').toLowerCase();
+  const path = `characters/${ownerId}/${sheetId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await state.sync.client.storage.from('sheet-images').upload(path, file, {
+    upsert: false,
+    cacheControl: '3600'
+  });
+
+  if (error) throw error;
+  return path;
+}
+
+function setSheetPreviewUrl(sheet, nextUrl) {
+  releasePreviewUrl(sheet);
+  sheet.imagePreviewUrl = nextUrl;
+}
+
+function releasePreviewUrl(sheet) {
+  if (sheet?.imagePreviewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(sheet.imagePreviewUrl);
+  }
+  if (sheet) {
+    sheet.imagePreviewUrl = null;
+  }
+}
+
 function downloadJson(fileName, payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -704,4 +818,8 @@ function escapeHtml(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/'/g, '&#39;');
 }

@@ -27,3 +27,6 @@ Thumbs.db
 # Test artifacts
 tests-results/*.txt
 tests-results/*.json
+
+#codex
+AGENTS.md
