@@ -1,0 +1,4 @@
+
+> arkham-ledger@1.0.0 build
+> tsc --noEmit
+

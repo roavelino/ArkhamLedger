@@ -1,0 +1,50 @@
+
+> arkham-ledger@1.0.0 test
+> node --test tests/*.test.mjs
+
+TAP version 13
+# Subtest: modular architecture files exist
+ok 1 - modular architecture files exist
+  ---
+  duration_ms: 1.12974
+  type: 'test'
+  ...
+# Subtest: index.html is GitHub Pages compatible (loads JS entrypoint)
+ok 2 - index.html is GitHub Pages compatible (loads JS entrypoint)
+  ---
+  duration_ms: 0.632728
+  type: 'test'
+  ...
+# Subtest: required tables are declared
+ok 3 - required tables are declared
+  ---
+  duration_ms: 1.657035
+  type: 'test'
+  ...
+# Subtest: rls enabled and policies exist
+ok 4 - rls enabled and policies exist
+  ---
+  duration_ms: 4.2938
+  type: 'test'
+  ...
+# Subtest: storage bucket and storage policies are declared
+ok 5 - storage bucket and storage policies are declared
+  ---
+  duration_ms: 0.410089
+  type: 'test'
+  ...
+# Subtest: permissions implement expected player and dm rules
+ok 6 - permissions implement expected player and dm rules
+  ---
+  duration_ms: 1.044988
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 341.657331

@@ -87,3 +87,12 @@ NPC functions:
 
 - Browser runtime uses `src/main.js` (no bundler required).
 - TypeScript modules under `src/**/*.ts` are service-layer modules intended for integration into your backend or build pipeline.
+
+
+## Alternative migration execution
+
+If local `psql` is unavailable, use one of these:
+
+1. **Supabase SQL Editor**: run `src/database/migrations.sql` directly in dashboard.
+2. **GitHub Action**: use `.github/workflows/migrate-supabase.yml` with secret `SUPABASE_DB_URL`.
+3. **CLI command** documented in `scripts/run-migration.md`.
