@@ -27,6 +27,8 @@ test('rls enabled and policies exist', () => {
 
 test('storage bucket and storage policies are declared', () => {
   assert.equal(includes("insert into storage.buckets"), true);
-  assert.equal(includes("values ('sheet-images', 'sheet-images', true)"), true);
+  assert.equal(includes("values ('sheet-images', 'sheet-images', false)"), true);
+  assert.equal(includes("update storage.buckets"), true);
   assert.equal(includes('create policy "sheet_images_upload_player_own_character"'), true);
+  assert.equal(includes('create policy "sheet_images_read"'), true);
 });

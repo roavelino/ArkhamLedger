@@ -47,6 +47,7 @@ export interface Database {
           id: string;
           owner_id: string;
           name: string;
+          is_active: boolean;
           sheet_data: Json;
           image_url: string | null;
           created_at: string;
@@ -56,6 +57,7 @@ export interface Database {
           id?: string;
           owner_id: string;
           name: string;
+          is_active?: boolean;
           sheet_data: Json;
           image_url?: string | null;
           created_at?: string;
@@ -63,6 +65,7 @@ export interface Database {
         };
         Update: {
           name?: string;
+          is_active?: boolean;
           sheet_data?: Json;
           image_url?: string | null;
           updated_at?: string;

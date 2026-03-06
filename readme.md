@@ -81,7 +81,8 @@ NPC functions:
 
 1. Open Supabase SQL Editor.
 2. Paste/run `src/database/migrations.sql`.
-3. Verify tables and bucket were created.
+3. Paste/run `src/database/migrations_character_state.sql` (character active/inactive + permission updates).
+4. Verify tables and bucket were created.
 
 ## Notes
 
