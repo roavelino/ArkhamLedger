@@ -37,13 +37,13 @@
         radial-gradient(circle at top left, rgba(195,167,108,.07), transparent 28%),
         radial-gradient(circle at bottom right, rgba(195,167,108,.05), transparent 25%),
         linear-gradient(180deg, #100f0d 0%, #13110e 100%);
-      overflow:hidden;
+      overflow:auto;
     }
 
     .app{
       display:grid;
       grid-template-columns: 320px 1fr;
-      height:100vh;
+      min-height:100vh;
     }
 
     .sidebar{
@@ -568,20 +568,6 @@
 
         <div class="row">
           <button class="btn ghost" id="exportAllBtn">Backup JSON</button>
-          <button class="btn ghost" id="quickRollBtn">D100</button>
-        </div>
-
-        <div class="switch">
-          <label for="viewMode">Visualização</label>
-          <select id="viewMode">
-            <option value="focus">Central</option>
-            <option value="side">Lado a lado</option>
-          </select>
-        </div>
-
-        <div class="row">
-          <button class="btn ghost" id="expandAllBtn">Abrir perícias</button>
-          <button class="btn ghost" id="collapseAllBtn">Fechar perícias</button>
         </div>
       </div>
 
@@ -618,33 +604,10 @@
 
   <input id="importFile" type="file" accept="application/json" class="hidden" />
 
-  <dialog id="rollDialog">
-    <div class="dlg-head">
-      <strong id="rollTitle">Rolagem</strong>
-      <button class="btn ghost" data-close-roll>Fechar</button>
-    </div>
-    <div class="dlg-body">
-      <div class="roll-result">
-        <div>
-          <div class="muted small" id="rollMeta">Alvo</div>
-          <div class="roll-big" id="rollNumber">00</div>
-        </div>
-        <div>
-          <div class="result-badge" id="rollBadge">Resultado</div>
-          <div class="muted small" id="rollThresholds">Difícil · Extrema</div>
-        </div>
-      </div>
-      <div class="muted small">
-        Regra prática: 1 é crítico. 96–100 (alvo &lt; 50) ou 100 (alvo ≥ 50) é desastre.
-      </div>
-    </div>
-    <div class="dlg-foot">
-      <button class="btn" data-close-roll>Ok</button>
-    </div>
-  </dialog>
-
   <div class="toast" id="toast"></div>
 
+  <script src="./env.js"></script>
+  <script src="./src/vendor/supabase.umd.js"></script>
   <script type="module" src="./src/main.js"></script>
 
 </body>

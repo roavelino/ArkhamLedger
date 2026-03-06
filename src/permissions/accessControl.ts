@@ -7,6 +7,7 @@ export interface AppUser {
 
 export interface OwnedResource {
   owner_id: string;
+  is_active?: boolean;
 }
 
 export function isDm(user: AppUser): boolean {
@@ -22,7 +23,7 @@ export function canViewCharacter(user: AppUser, character: OwnedResource): boole
 }
 
 export function canEditCharacter(user: AppUser, character: OwnedResource): boolean {
-  return canViewCharacter(user, character);
+  return isDm(user) || (character.owner_id === user.id && character.is_active !== false);
 }
 
 export function canDeleteCharacter(user: AppUser, character: OwnedResource): boolean {

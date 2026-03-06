@@ -14,6 +14,7 @@ export interface CharacterSheet {
   id: string;
   owner_id: string;
   name: string;
+  is_active: boolean;
   sheet_data: Json;
   image_url: string | null;
   created_at: string;
@@ -22,11 +23,13 @@ export interface CharacterSheet {
 
 export interface CreateCharacterInput {
   name: string;
+  is_active?: boolean;
   sheet_data: Json;
 }
 
 export interface UpdateCharacterInput {
   name?: string;
+  is_active?: boolean;
   sheet_data?: Json;
   image_url?: string | null;
 }
@@ -34,11 +37,27 @@ export interface UpdateCharacterInput {
 export async function createCharacterSheet(user: AppUser, payload: CreateCharacterInput): Promise<CharacterSheet> {
   assertPermission(canCreateCharacter(user), 'User is not allowed to create character sheets.');
 
+  if (user.role === 'player') {
+    const { data: activeRows, error: activeError } = await supabase
+      .from('character_sheets')
+      .select('id')
+      .eq('owner_id', user.id)
+      .eq('is_active', true)
+      .limit(1);
+
+    if (activeError) {
+      throw new Error(activeError.message);
+    }
+
+    assertPermission((activeRows ?? []).length === 0, 'Players can only create a character when they have no active character.');
+  }
+
   const { data, error } = await supabase
     .from('character_sheets')
     .insert({
       owner_id: user.id,
       name: payload.name,
+      is_active: payload.is_active ?? true,
       sheet_data: payload.sheet_data
     })
     .select('*')

@@ -15,11 +15,19 @@ create table if not exists public.character_sheets (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references public.users(id) on delete cascade,
   name text not null,
+  is_active boolean not null default true,
   sheet_data jsonb not null default '{}'::jsonb,
   image_url text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.character_sheets
+  add column if not exists is_active boolean not null default true;
+
+update public.character_sheets
+set is_active = true
+where is_active is null;
 
 create table if not exists public.npc_sheets (
   id uuid primary key default gen_random_uuid(),
@@ -45,6 +53,17 @@ create table if not exists public.images (
 
 create index if not exists idx_character_sheets_owner_id on public.character_sheets(owner_id);
 create index if not exists idx_character_sheets_updated_at on public.character_sheets(updated_at desc);
+with ranked_active as (
+  select
+    id,
+    row_number() over (partition by owner_id order by updated_at desc, created_at desc, id desc) as rn
+  from public.character_sheets
+  where is_active = true
+)
+update public.character_sheets
+set is_active = false
+where id in (select id from ranked_active where rn > 1);
+create unique index if not exists uniq_character_active_owner on public.character_sheets(owner_id) where is_active = true;
 create index if not exists idx_npc_sheets_created_by on public.npc_sheets(created_by);
 create index if not exists idx_npc_sheets_updated_at on public.npc_sheets(updated_at desc);
 create index if not exists idx_images_owner_id on public.images(owner_id);
@@ -63,13 +82,62 @@ as $$
   );
 $$;
 
+create or replace function public.can_manage_image_record(
+  actor_uid uuid,
+  image_owner_id uuid,
+  image_sheet_type text,
+  image_sheet_id uuid
+)
+returns boolean
+language sql
+stable
+as $$
+  select
+    case
+      when actor_uid is null then false
+      when public.is_dm(actor_uid) then
+        case
+          when image_sheet_type = 'character' then exists(select 1 from public.character_sheets cs where cs.id = image_sheet_id)
+          when image_sheet_type = 'npc' then exists(select 1 from public.npc_sheets ns where ns.id = image_sheet_id)
+          else false
+        end
+      when actor_uid <> image_owner_id then false
+      when image_sheet_type = 'character' then exists(
+        select 1
+        from public.character_sheets cs
+        where cs.id = image_sheet_id
+          and cs.owner_id = actor_uid
+      )
+      else false
+    end;
+$$;
+
+create or replace function public.can_create_character_sheet(actor_uid uuid, target_owner_id uuid)
+returns boolean
+language sql
+stable
+as $$
+  select
+    case
+      when actor_uid is null then false
+      when public.is_dm(actor_uid) then true
+      when actor_uid <> target_owner_id then false
+      else not exists (
+        select 1
+        from public.character_sheets cs
+        where cs.owner_id = actor_uid
+          and cs.is_active = true
+      )
+    end;
+$$;
+
 create or replace function public.validate_image_sheet_ref()
 returns trigger
 language plpgsql
 as $$
 begin
   if new.sheet_type = 'character' then
-    if not exists(select 1 from public.character_sheets cs where cs.id = new.sheet_id) then
+    if not exists(select 1 from public.character_sheets cs where cs.id = new.sheet_id and cs.owner_id = new.owner_id) then
       raise exception 'Invalid character sheet reference for image: %', new.sheet_id;
     end if;
   elsif new.sheet_type = 'npc' then
@@ -144,12 +212,12 @@ create policy "character_select_owner_or_dm"
 
 create policy "character_insert_owner_or_dm"
   on public.character_sheets for insert
-  with check (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  with check (public.can_create_character_sheet(auth.uid(), owner_id));
 
 create policy "character_update_owner_or_dm"
   on public.character_sheets for update
-  using (owner_id = auth.uid() or public.is_dm(auth.uid()))
-  with check (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  using (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true))
+  with check (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true));
 
 create policy "character_delete_owner_or_dm"
   on public.character_sheets for delete
@@ -176,25 +244,28 @@ create policy "npc_delete_dm"
 -- images policies
 create policy "images_select_owner_or_dm"
   on public.images for select
-  using (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  using (public.can_manage_image_record(auth.uid(), owner_id, sheet_type, sheet_id));
 
 create policy "images_insert_owner_or_dm"
   on public.images for insert
-  with check (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  with check (public.can_manage_image_record(auth.uid(), owner_id, sheet_type, sheet_id));
 
 create policy "images_update_owner_or_dm"
   on public.images for update
-  using (owner_id = auth.uid() or public.is_dm(auth.uid()))
-  with check (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  using (public.can_manage_image_record(auth.uid(), owner_id, sheet_type, sheet_id))
+  with check (public.can_manage_image_record(auth.uid(), owner_id, sheet_type, sheet_id));
 
 create policy "images_delete_owner_or_dm"
   on public.images for delete
-  using (owner_id = auth.uid() or public.is_dm(auth.uid()));
+  using (public.can_manage_image_record(auth.uid(), owner_id, sheet_type, sheet_id));
 
 -- Storage bucket & policies for images
 insert into storage.buckets (id, name, public)
-values ('sheet-images', 'sheet-images', true)
+values ('sheet-images', 'sheet-images', false)
 on conflict (id) do nothing;
+update storage.buckets
+set public = false
+where id = 'sheet-images';
 
 drop policy if exists "sheet_images_read" on storage.objects;
 drop policy if exists "sheet_images_upload_player_own_character" on storage.objects;
@@ -203,7 +274,16 @@ drop policy if exists "sheet_images_delete_owner_or_dm" on storage.objects;
 
 create policy "sheet_images_read"
   on storage.objects for select
-  using (bucket_id = 'sheet-images');
+  using (
+    bucket_id = 'sheet-images'
+    and (
+      public.is_dm(auth.uid())
+      or (
+        (storage.foldername(name))[1] = 'characters'
+        and (storage.foldername(name))[2] = auth.uid()::text
+      )
+    )
+  );
 
 create policy "sheet_images_upload_player_own_character"
   on storage.objects for insert

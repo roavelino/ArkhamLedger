@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate runtime env files
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+
+          URL="${SUPABASE_URL:-https://example.supabase.co}"
+          PUB_KEY="${SUPABASE_PUBLISHABLE_KEY:-sb_publishable_placeholder}"
+          SECRET_KEY="${SUPABASE_SECRET_KEY:-}"
+
+          cat > .env <<EOF
+          SUPABASE_URL=$URL
+          SUPABASE_PUBLISHABLE_KEY=$PUB_KEY
+          SUPABASE_SECRET_KEY=$SECRET_KEY
+          EOF
+
+          cat > env.js <<EOF
+          window.ARKHAM_ENV = {
+            SUPABASE_URL: '$URL',
+            SUPABASE_PUBLISHABLE_KEY: '$PUB_KEY'
+          };
+          EOF
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Run tests
+        run: npm test

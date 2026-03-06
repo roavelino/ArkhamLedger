@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'src/database/migrations.sql'
+      - 'src/database/**/*.sql'
       - '.github/workflows/migrate-supabase.yml'
 
 jobs:
@@ -15,12 +15,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify psql
-        run: psql --version
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
-      - name: Run migration against Supabase Postgres
+      - name: Verify required secret
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -euo pipefail
           test -n "$SUPABASE_DB_URL"
+
+      - name: Apply baseline migration
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations.sql
+
+      - name: Apply character state migration
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f src/database/migrations_character_state.sql
