@@ -1,0 +1,50 @@
+{
+  "target": "http://127.0.0.1:4173/",
+  "checks": [
+    {
+      "name": "newSheetBtn increases sheet count",
+      "passed": true,
+      "details": {
+        "initial": 1,
+        "after_new": 2
+      }
+    },
+    {
+      "name": "status updates after create",
+      "passed": true,
+      "details": {
+        "before": "Pronto",
+        "after": "Nova ficha criada"
+      }
+    },
+    {
+      "name": "duplicate increases sheet count",
+      "passed": true,
+      "details": {
+        "after_new": 2,
+        "after_dup": 3
+      }
+    },
+    {
+      "name": "delete reduces sheet count",
+      "passed": true,
+      "details": {
+        "after_dup": 3,
+        "after_delete": 2
+      }
+    },
+    {
+      "name": "search interaction works",
+      "passed": true,
+      "details": {
+        "value": "Investigador"
+      }
+    },
+    {
+      "name": "quick roll opens dialog",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "artifact_screenshot": "browser:/tmp/codex_browser_invocations/4b5a064090fc07d9/artifacts/tests-results/e2e-local-fixed.png"
+}

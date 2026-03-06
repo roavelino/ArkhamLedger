@@ -1,0 +1,22 @@
+{
+  "target": "https://roavelino.github.io/ArkhamLedger/",
+  "checks": [
+    {
+      "name": "newSheetBtn increases sheet count",
+      "passed": false,
+      "details": {
+        "initial": 0,
+        "after": 0
+      }
+    },
+    {
+      "name": "status tag changes from Pronto",
+      "passed": true,
+      "details": {
+        "status": "Backend Supabase pronto"
+      }
+    }
+  ],
+  "passed": false,
+  "artifact_screenshot": "browser:/tmp/codex_browser_invocations/1e7367d954e4240d/artifacts/tests-results/e2e-remote-current.png"
+}
