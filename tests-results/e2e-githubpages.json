@@ -1,0 +1,47 @@
+{
+  "url": "https://roavelino.github.io/ArkhamLedger/",
+  "checks": [
+    {
+      "name": "title contains Arkham",
+      "passed": true,
+      "details": "Arkham Ledger | Gerenciador de Fichas CoC"
+    },
+    {
+      "name": "selector #newSheetBtn exists",
+      "passed": true
+    },
+    {
+      "name": "selector #sheetSearch exists",
+      "passed": true
+    },
+    {
+      "name": "selector #viewRoot exists",
+      "passed": true
+    },
+    {
+      "name": "selector #sheetList exists",
+      "passed": true
+    },
+    {
+      "name": "selector #statusTag exists",
+      "passed": true
+    },
+    {
+      "name": "new sheet button adds/keeps valid list",
+      "passed": true,
+      "details": {
+        "initial": 0,
+        "after_new": 0
+      }
+    },
+    {
+      "name": "search input filters without crash",
+      "passed": true,
+      "details": {
+        "filtered_count": 0
+      }
+    }
+  ],
+  "passed": true,
+  "artifact_screenshot": "browser:/tmp/codex_browser_invocations/1cae5c8398d8ec3a/artifacts/tests-results/e2e-githubpages.png"
+}
