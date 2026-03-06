@@ -1,10 +1,15 @@
-import { getRuntimeSupabaseConfig } from './runtimeConfig.js';
+import { createRuntimeBrowserClient } from './browser/supabaseBrowserClient.js';
+import {
+  createSignedSheetImageUrl,
+  deleteCharacterSheet,
+  fetchProfile,
+  listCharacterSheets,
+  updateCharacterSheetImage,
+  uploadCharacterSheetImage,
+  upsertCharacterSheet
+} from './browser/characterSheetsApi.js';
 
 const STORAGE_KEY = 'arkham-ledger:sheets:v1';
-const runtimeConfig = getRuntimeSupabaseConfig();
-const SUPABASE_URL = runtimeConfig.url;
-const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.publishableKey;
-const createClient = globalThis.supabase?.createClient;
 
 const state = {
   sheets: [],
@@ -46,23 +51,12 @@ const el = {
 void initialize();
 
 async function initialize() {
-  if (!createClient) {
-    setStatus('Supabase SDK local nao carregado');
+  try {
+    state.sync.client = createRuntimeBrowserClient();
+  } catch (error) {
+    setStatus(error?.message || 'Supabase nao configurado');
     return;
   }
-
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    setStatus('Supabase nao configurado');
-    return;
-  }
-
-  state.sync.client = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
 
   const {
     data: { session }
@@ -233,25 +227,12 @@ function bindEvents() {
 }
 
 async function loadProfile() {
-  const { data, error } = await state.sync.client
-    .from('users')
-    .select('id, role, display_name')
-    .eq('id', state.sync.user.id)
-    .single();
-
-  if (error) throw new Error(error.message);
-  state.sync.profile = data;
+  state.sync.profile = await fetchProfile(state.sync.client, state.sync.user.id);
 }
 
 async function loadSheetsFromSupabase() {
-  const { data, error } = await state.sync.client
-    .from('character_sheets')
-    .select('*')
-    .order('updated_at', { ascending: false });
-
-  if (error) throw new Error(error.message);
-
-  state.sheets = (data || []).map(deserializeSheet);
+  const rows = await listCharacterSheets(state.sync.client);
+  state.sheets = rows.map(deserializeSheet);
   state.selectedId = state.sheets[0]?.id || null;
   state.dirty = false;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
@@ -424,28 +405,16 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
 
   try {
     const payload = serializeSheet(selected, state.sync.user.id);
-    const { error, data } = await state.sync.client
-      .from('character_sheets')
-      .upsert(payload, { onConflict: 'id' })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-
-    let refreshed = deserializeSheet(data);
+    let refreshed = deserializeSheet(await upsertCharacterSheet(state.sync.client, payload));
 
     if (selected.pendingImageFile) {
-      const imagePath = await uploadSheetImage(refreshed.id, refreshed.ownerId || state.sync.user.id, selected.pendingImageFile);
-      const imageResult = await state.sync.client
-        .from('character_sheets')
-        .update({ image_url: imagePath })
-        .eq('id', refreshed.id)
-        .select('*')
-        .single();
-
-      if (imageResult.error) throw imageResult.error;
-
-      refreshed = deserializeSheet(imageResult.data);
+      const imagePath = await uploadCharacterSheetImage(
+        state.sync.client,
+        refreshed.ownerId || state.sync.user.id,
+        refreshed.id,
+        selected.pendingImageFile
+      );
+      refreshed = deserializeSheet(await updateCharacterSheetImage(state.sync.client, refreshed.id, imagePath));
       selected.pendingImageFile = null;
     }
 
@@ -469,8 +438,7 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
 }
 
 async function deleteRemoteSheet(sheetId) {
-  const { error } = await state.sync.client.from('character_sheets').delete().eq('id', sheetId);
-  if (error) throw error;
+  await deleteCharacterSheet(state.sync.client, sheetId);
 }
 
 function applyRoleVisibility() {
@@ -521,7 +489,7 @@ function isOwnedByCurrentUser(sheet) {
 function canEditSheet(sheet) {
   if (!sheet || !state.sync.connected) return false;
   if (isCurrentUserDm()) return true;
-  return isOwnedByCurrentUser(sheet) && sheet.isActive;
+  return isOwnedByCurrentUser(sheet);
 }
 
 function playerHasActiveCharacter() {
@@ -754,29 +722,13 @@ function renderSheetImage(sheet) {
 async function ensureSheetImageUrl(sheet) {
   if (!sheet?.imagePath || sheet.imagePreviewUrl || sheet.imageSignedUrl || !state.sync.client) return;
 
-  if (/^https?:\/\//i.test(sheet.imagePath)) {
-    sheet.imageSignedUrl = sheet.imagePath;
-    if (sheet.id === state.selectedId) render();
+  try {
+    sheet.imageSignedUrl = await createSignedSheetImageUrl(state.sync.client, sheet.imagePath, 3600);
+  } catch {
     return;
   }
 
-  const { data, error } = await state.sync.client.storage.from('sheet-images').createSignedUrl(sheet.imagePath, 3600);
-  if (error || !data?.signedUrl) return;
-
-  sheet.imageSignedUrl = data.signedUrl;
   if (sheet.id === state.selectedId) render();
-}
-
-async function uploadSheetImage(sheetId, ownerId, file) {
-  const extension = String(file.name.split('.').pop() || 'bin').toLowerCase();
-  const path = `characters/${ownerId}/${sheetId}/${crypto.randomUUID()}.${extension}`;
-  const { error } = await state.sync.client.storage.from('sheet-images').upload(path, file, {
-    upsert: false,
-    cacheControl: '3600'
-  });
-
-  if (error) throw error;
-  return path;
 }
 
 function setSheetPreviewUrl(sheet, nextUrl) {

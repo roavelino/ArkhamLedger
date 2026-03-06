@@ -104,7 +104,7 @@ export interface Database {
           sheet_type: 'character' | 'npc';
           sheet_id: string;
           storage_path: string;
-          public_url: string;
+          public_url: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -114,13 +114,13 @@ export interface Database {
           sheet_type: 'character' | 'npc';
           sheet_id: string;
           storage_path: string;
-          public_url: string;
+          public_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           storage_path?: string;
-          public_url?: string;
+          public_url?: string | null;
           updated_at?: string;
         };
       };

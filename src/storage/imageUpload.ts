@@ -16,7 +16,7 @@ async function upsertImageRecord(payload: {
   sheetType: 'character' | 'npc';
   sheetId: string;
   storagePath: string;
-  publicUrl: string;
+  publicUrl?: string | null;
 }) {
   const { error } = await supabase.from('images').upsert(
     {
@@ -49,18 +49,17 @@ export async function uploadCharacterImage(user: AppUser, characterId: string, f
     throw new Error(error.message);
   }
 
-  const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path);
-  await updateCharacterSheet(user, characterId, { image_url: data.publicUrl });
+  await updateCharacterSheet(user, characterId, { image_url: path });
 
   await upsertImageRecord({
     ownerId: character.owner_id,
     sheetType: 'character',
     sheetId: characterId,
     storagePath: path,
-    publicUrl: data.publicUrl
+    publicUrl: null
   });
 
-  return data.publicUrl;
+  return path;
 }
 
 export async function uploadNpcImage(user: AppUser, npcId: string, file: File) {
@@ -78,16 +77,15 @@ export async function uploadNpcImage(user: AppUser, npcId: string, file: File) {
     throw new Error(error.message);
   }
 
-  const { data } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path);
-  await updateNpcSheet(user, npcId, { image_url: data.publicUrl });
+  await updateNpcSheet(user, npcId, { image_url: path });
 
   await upsertImageRecord({
     ownerId: user.id,
     sheetType: 'npc',
     sheetId: npcId,
     storagePath: path,
-    publicUrl: data.publicUrl
+    publicUrl: null
   });
 
-  return data.publicUrl;
+  return path;
 }

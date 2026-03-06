@@ -1,10 +1,7 @@
 import { authErrorToMessage, signinSuccessMessage, signupSuccessMessage } from './auth/authFeedback.js';
-import { getRuntimeSupabaseConfig } from './runtimeConfig.js';
+import { createRuntimeBrowserClient } from './browser/supabaseBrowserClient.js';
 
-const runtimeConfig = getRuntimeSupabaseConfig();
-const SUPABASE_URL = runtimeConfig.url;
-const SUPABASE_PUBLISHABLE_KEY = runtimeConfig.publishableKey;
-const createClient = globalThis.supabase?.createClient;
+const PUBLIC_CONFIRMATION_REDIRECT_URL = 'https://roavelino.github.io/ArkhamLedger/login.html';
 
 const el = {
   message: document.getElementById('authMessage'),
@@ -20,23 +17,12 @@ let supabase = null;
 void initialize();
 
 async function initialize() {
-  if (!createClient) {
-    showMessage('SDK do Supabase nao carregado.', 'error');
+  try {
+    supabase = createRuntimeBrowserClient();
+  } catch (error) {
+    showMessage(error?.message || 'Falha ao carregar Supabase.', 'error');
     return;
   }
-
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    showMessage('Configuracao do Supabase ausente no HTML.', 'error');
-    return;
-  }
-
-  supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
 
   const {
     data: { session }
@@ -90,6 +76,7 @@ function bindEvents() {
       email: String(email).trim(),
       password: String(password),
       options: {
+        emailRedirectTo: PUBLIC_CONFIRMATION_REDIRECT_URL,
         data: {
           display_name: String(displayName).trim() || null
         }

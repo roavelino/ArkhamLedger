@@ -23,11 +23,11 @@ export function canViewCharacter(user: AppUser, character: OwnedResource): boole
 }
 
 export function canEditCharacter(user: AppUser, character: OwnedResource): boolean {
-  return isDm(user) || (character.owner_id === user.id && character.is_active !== false);
+  return isDm(user) || character.owner_id === user.id;
 }
 
 export function canDeleteCharacter(user: AppUser, character: OwnedResource): boolean {
-  return canViewCharacter(user, character);
+  return canEditCharacter(user, character);
 }
 
 export function canCreateNpc(user: AppUser): boolean {

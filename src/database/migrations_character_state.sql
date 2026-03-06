@@ -95,11 +95,15 @@ $$;
 
 drop policy if exists "character_insert_owner_or_dm" on public.character_sheets;
 drop policy if exists "character_update_owner_or_dm" on public.character_sheets;
+drop policy if exists "character_delete_owner_or_dm" on public.character_sheets;
 drop policy if exists "images_select_owner_or_dm" on public.images;
 drop policy if exists "images_insert_owner_or_dm" on public.images;
 drop policy if exists "images_update_owner_or_dm" on public.images;
 drop policy if exists "images_delete_owner_or_dm" on public.images;
 drop policy if exists "sheet_images_read" on storage.objects;
+
+alter table public.images
+alter column public_url drop not null;
 
 create policy "character_insert_owner_or_dm"
   on public.character_sheets for insert
@@ -107,8 +111,12 @@ create policy "character_insert_owner_or_dm"
 
 create policy "character_update_owner_or_dm"
   on public.character_sheets for update
-  using (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true))
-  with check (public.is_dm(auth.uid()) or (owner_id = auth.uid() and is_active = true));
+  using (public.is_dm(auth.uid()) or owner_id = auth.uid())
+  with check (public.is_dm(auth.uid()) or owner_id = auth.uid());
+
+create policy "character_delete_owner_or_dm"
+  on public.character_sheets for delete
+  using (public.is_dm(auth.uid()) or owner_id = auth.uid());
 
 create policy "images_select_owner_or_dm"
   on public.images for select
