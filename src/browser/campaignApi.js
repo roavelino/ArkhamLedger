@@ -1,6 +1,10 @@
 const CAMPAIGN_ASSET_BUCKET = 'campaign-assets';
 const SHEET_MEDIA_BUCKET = 'sheet-media';
 
+function isMissingColumnError(error, columnName) {
+  return error?.code === '42703' && String(error?.message || '').includes(columnName);
+}
+
 export const CAMPAIGN_CONTENT_TABLES = [
   'session_summaries',
   'timeline_entries',
@@ -81,6 +85,12 @@ export async function listCampaignContentRows(client, table, campaignId) {
   }
 
   const { data, error } = await query;
+
+  if (error && (table === 'clues' || table === 'handouts') && isMissingColumnError(error, 'archived_at')) {
+    const fallback = await client.from(table).select('*').eq('campaign_id', campaignId).order('updated_at', { ascending: false });
+    if (fallback.error) throw fallback.error;
+    return fallback.data || [];
+  }
 
   if (error) throw error;
   return data || [];

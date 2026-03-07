@@ -6,13 +6,16 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node tests/e2e-smoke.mjs",
+    "test:e2e:real": "node tests/e2e-real.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "playwright": "^1.58.2",
     "typescript": "^5.8.2"
   }
 }

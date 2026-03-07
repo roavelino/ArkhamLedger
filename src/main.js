@@ -44,6 +44,10 @@ const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_VIDEO_SIZE = 20 * 1024 * 1024;
 const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
 
+function isMissingColumnError(error, columnName) {
+  return error?.code === '42703' && String(error?.message || '').includes(columnName);
+}
+
 const CONTENT_DEFINITIONS = [
   {
     table: 'session_summaries',
@@ -360,10 +364,26 @@ function bindEvents() {
       if (!confirm(`Arquivar NPC "${selected.name}"?`)) return;
       selected.archivedAt = new Date().toISOString();
       selected.updatedAt = new Date().toISOString();
-      await saveSelectedSheet('NPC arquivado');
-      state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
-      state.selectedId = state.sheets[0]?.id || null;
-      render();
+      try {
+        await saveSelectedSheet('NPC arquivado', true);
+        state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
+        state.selectedId = state.sheets[0]?.id || null;
+        render();
+      } catch (error) {
+        if (isMissingColumnError(error, 'archived_at')) {
+          selected.archivedAt = null;
+          if (state.sync.connected && selected.id) {
+            await deleteCharacterSheet(state.sync.client, selected.id);
+          }
+          state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
+          state.selectedId = state.sheets[0]?.id || null;
+          state.dirty = false;
+          showToast('NPC removido. A migracao de arquivo ainda nao foi aplicada.');
+          render();
+          return;
+        }
+        throw error;
+      }
       return;
     }
 
@@ -1483,15 +1503,26 @@ function bindCampaignFields(campaignId) {
         if (table === 'clues' || table === 'handouts') {
           const current = (state.campaignContent[campaignId][table] || []).find((row) => row.id === rowId);
           if (!current) return;
-          const archived = await upsertCampaignContentRow(state.sync.client, table, {
-            ...current,
-            archived_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
-          state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== archived.id);
-          render();
-          showToast('Item arquivado');
-          return;
+          try {
+            const archived = await upsertCampaignContentRow(state.sync.client, table, {
+              ...current,
+              archived_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
+            state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== archived.id);
+            render();
+            showToast('Item arquivado');
+            return;
+          } catch (error) {
+            if (!isMissingColumnError(error, 'archived_at')) {
+              throw error;
+            }
+            await deleteCampaignContentRow(state.sync.client, table, rowId);
+            state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== rowId);
+            render();
+            showToast('Item removido. A migracao de arquivo ainda nao foi aplicada.');
+            return;
+          }
         }
 
         await deleteCampaignContentRow(state.sync.client, table, rowId);
@@ -1852,7 +1883,7 @@ function formatGalleryTags(tagsJson) {
   return 'Sem tags';
 }
 
-async function saveSelectedSheet(successMessage = 'Ficha salva') {
+async function saveSelectedSheet(successMessage = 'Ficha salva', propagateError = false) {
   const selected = getSelectedSheet();
   if (!selected || !canEditSheet(selected)) return;
 
@@ -1905,6 +1936,9 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
     render();
   } catch (error) {
     showToast(error?.message || 'Falha ao salvar');
+    if (propagateError) {
+      throw error;
+    }
   }
 }
 
