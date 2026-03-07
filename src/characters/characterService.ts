@@ -13,8 +13,16 @@ const supabase = createBrowserSupabaseClient();
 export interface CharacterSheet {
   id: string;
   owner_id: string;
+  owner_user_id: string | null;
   name: string;
+  type: 'player_character' | 'npc';
+  campaign_id: string | null;
   is_active: boolean;
+  age: number | null;
+  occupation: string | null;
+  description: string | null;
+  intro_video_url: string | null;
+  notes: string | null;
   sheet_data: Json;
   image_url: string | null;
   created_at: string;
@@ -23,13 +31,28 @@ export interface CharacterSheet {
 
 export interface CreateCharacterInput {
   name: string;
+  type?: 'player_character' | 'npc';
+  campaign_id?: string | null;
   is_active?: boolean;
+  age?: number | null;
+  occupation?: string | null;
+  description?: string | null;
+  intro_video_url?: string | null;
+  notes?: string | null;
   sheet_data: Json;
 }
 
 export interface UpdateCharacterInput {
   name?: string;
+  owner_user_id?: string | null;
+  type?: 'player_character' | 'npc';
+  campaign_id?: string | null;
   is_active?: boolean;
+  age?: number | null;
+  occupation?: string | null;
+  description?: string | null;
+  intro_video_url?: string | null;
+  notes?: string | null;
   sheet_data?: Json;
   image_url?: string | null;
 }
@@ -56,8 +79,16 @@ export async function createCharacterSheet(user: AppUser, payload: CreateCharact
     .from('character_sheets')
     .insert({
       owner_id: user.id,
+      owner_user_id: user.role === 'player' ? user.id : null,
       name: payload.name,
+      type: payload.type ?? 'player_character',
+      campaign_id: payload.campaign_id ?? null,
       is_active: payload.is_active ?? true,
+      age: payload.age ?? null,
+      occupation: payload.occupation ?? null,
+      description: payload.description ?? null,
+      intro_video_url: payload.intro_video_url ?? null,
+      notes: payload.notes ?? null,
       sheet_data: payload.sheet_data
     })
     .select('*')
