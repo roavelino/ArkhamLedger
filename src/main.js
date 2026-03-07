@@ -34,6 +34,8 @@ import {
 const STORAGE_KEY = 'arkham-ledger:sheets:v2';
 const VIEW_SHEETS = 'sheets';
 const VIEW_CAMPAIGNS = 'campaigns';
+const CAMPAIGN_MODE_DASHBOARD = 'dashboard';
+const CAMPAIGN_MODE_DM_SCREEN = 'dm_screen';
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const DOCUMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'text/markdown'];
 const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
@@ -121,7 +123,8 @@ const CONTENT_DEFINITIONS = [
     supportsType: true,
     typeLabel: 'Tipo de pagina',
     typeOptions: ['markdown', 'quick rules', 'session notes', 'npc list reference', 'clue list reference'],
-    supportsStatus: false
+    supportsStatus: false,
+    supportsSort: true
   }
 ];
 
@@ -131,6 +134,8 @@ const state = {
   campaigns: [],
   selectedId: null,
   selectedCampaignId: null,
+  selectedDmScreenPageId: null,
+  campaignMode: CAMPAIGN_MODE_DASHBOARD,
   search: '',
   dirty: false,
   campaignDirty: false,
@@ -220,6 +225,13 @@ function injectToolbarButtons() {
   el.topActions.prepend(saveButton);
   el.saveSheetBtn = saveButton;
 
+  const pdfButton = document.createElement('button');
+  pdfButton.className = 'btn secondary';
+  pdfButton.id = 'exportPdfBtn';
+  pdfButton.textContent = 'PDF';
+  el.topActions.prepend(pdfButton);
+  el.exportPdfBtn = pdfButton;
+
   const toggleButton = document.createElement('button');
   toggleButton.className = 'btn ghost';
   toggleButton.id = 'toggleActiveBtn';
@@ -243,6 +255,7 @@ function bindEvents() {
 
   document.getElementById('switchCampaignsBtn')?.addEventListener('click', async () => {
     state.view = VIEW_CAMPAIGNS;
+    state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
     await ensureSelectedCampaignLoaded();
     render();
   });
@@ -369,6 +382,13 @@ function bindEvents() {
     showToast('Ficha exportada');
   });
 
+  el.exportPdfBtn?.addEventListener('click', async () => {
+    if (state.view !== VIEW_SHEETS) return;
+    const selected = getSelectedSheet();
+    if (!selected) return;
+    await exportSheetAsPdf(selected);
+  });
+
   el.sheetSearch?.addEventListener('input', (event) => {
     state.search = String(event.target.value || '').toLowerCase().trim();
     renderList();
@@ -423,6 +443,8 @@ async function ensureSelectedCampaignLoaded() {
       state.mapPins[mapRow.id] = pinLists[index];
     });
   }
+
+  ensureSelectedDmScreenPage();
 }
 
 async function ensureNpcGalleryLoaded() {
@@ -528,7 +550,9 @@ function renderCampaignList() {
       </div>`;
     item.addEventListener('click', async () => {
       state.selectedCampaignId = campaign.id;
+      state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
       await ensureSelectedCampaignLoaded();
+      ensureSelectedDmScreenPage();
       render();
     });
     el.sheetList.appendChild(item);
@@ -538,6 +562,10 @@ function renderCampaignList() {
 function renderMain() {
   if (!el.viewRoot) return;
   if (state.view === VIEW_CAMPAIGNS) {
+    if (state.campaignMode === CAMPAIGN_MODE_DM_SCREEN) {
+      renderDmScreen();
+      return;
+    }
     renderCampaign();
     return;
   }
@@ -900,6 +928,11 @@ function renderCampaign() {
         <div class="field"><label>Resumo Publico</label><textarea id="campaignSummary" ${disabled}>${escapeHtml(selected.publicSummary)}</textarea></div>
         ${editable ? '<div class="field"><label>Capa</label><input id="campaignCoverFile" type="file" accept="image/*"></div>' : ''}
         <div class="helper">A campanha organiza fichas, pistas, documentos e pagina da tela do mestre em um unico painel mobile-first.</div>
+        ${
+          isCurrentUserDm()
+            ? '<div class="row"><button id="openDmScreenBtn" class="btn secondary" type="button">Abrir Tela do Mestre</button></div>'
+            : ''
+        }
       </div>
     </article>
 
@@ -949,6 +982,101 @@ function renderCampaign() {
   </div>`;
 
   bindCampaignFields(selected.id);
+}
+
+function renderDmScreen() {
+  const campaign = getSelectedCampaign();
+  if (!campaign) {
+    state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
+    renderCampaign();
+    return;
+  }
+
+  const pages = getSortedDmScreenPages(campaign.id);
+  const page = pages.find((item) => item.id === state.selectedDmScreenPageId) || pages[0] || null;
+  if (!page && state.selectedDmScreenPageId !== null) {
+    state.selectedDmScreenPageId = null;
+  }
+
+  el.viewRoot.className = 'view-root focus-view';
+  el.viewRoot.innerHTML = `<article class="sheet-card" style="width:min(1380px,100%)">
+    <header class="card-header">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h2>${escapeHtml(campaign.title)}</h2>
+          <div class="subtitle">Tela do Mestre</div>
+        </div>
+        <button id="backToCampaignBtn" class="btn secondary" type="button">Voltar ao painel</button>
+      </div>
+    </header>
+    <div class="sheet-body">
+      ${
+        pages.length
+          ? `<div class="row">${pages
+              .map(
+                (item) =>
+                  `<button class="btn ${item.id === page?.id ? 'ok' : 'secondary'}" type="button" data-open-dm-page="${escapeAttribute(item.id)}">${escapeHtml(item.title)}</button>`
+              )
+              .join('')}</div>`
+          : '<p class="muted">Nenhuma pagina cadastrada. Crie uma em Campanhas > Tela do Mestre.</p>'
+      }
+      ${
+        page
+          ? `<section class="section">
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <h3>${escapeHtml(page.title)}</h3>
+              <div class="helper">${escapeHtml(page.content_type || 'markdown')} · ordem ${Number(page.sort_order || 0)}</div>
+            </div>
+          </div>
+          ${renderDmScreenPageBody(page, campaign.id)}
+        </section>`
+          : ''
+      }
+    </div>
+  </article>`;
+
+  document.getElementById('backToCampaignBtn')?.addEventListener('click', () => {
+    state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
+    render();
+  });
+
+  for (const button of document.querySelectorAll('[data-open-dm-page]')) {
+    button.addEventListener('click', () => {
+      state.selectedDmScreenPageId = button.getAttribute('data-open-dm-page');
+      render();
+    });
+  }
+}
+
+function renderDmScreenPageBody(page, campaignId) {
+  if (page.content_type === 'npc list reference') {
+    const visibleSheets = state.sheets.filter((sheet) => sheet.campaignId === campaignId);
+    return visibleSheets.length
+      ? `<div class="grid-2">${visibleSheets.map((sheet) => renderGalleryCard(sheet)).join('')}</div>`
+      : '<p class="muted">Nenhum NPC ou personagem vinculado.</p>';
+  }
+
+  if (page.content_type === 'clue list reference') {
+    const clues = state.campaignContent[campaignId]?.clues || [];
+    return clues.length
+      ? clues
+          .map(
+            (clue) => `<div class="section">
+            <strong>${escapeHtml(clue.title)}</strong>
+            <div class="helper">${escapeHtml(clue.status || 'hidden')}</div>
+            <div>${escapeHtml(clue.description || '')}</div>
+          </div>`
+          )
+          .join('')
+      : '<p class="muted">Nenhuma pista cadastrada.</p>';
+  }
+
+  if (page.content_type === 'markdown') {
+    return `<div class="section">${renderMarkdown(page.content_json_or_text || '')}</div>`;
+  }
+
+  return `<div style="white-space:pre-wrap;font-size:1.05rem;line-height:1.7">${escapeHtml(page.content_json_or_text || '')}</div>`;
 }
 
 function renderMemberCard(member, editable) {
@@ -1003,6 +1131,7 @@ function renderContentSection(campaignId, definition, rows, editable) {
                   </div>
                   ${definition.supportsType && row.content_type ? `<div class="helper">${escapeHtml(row.content_type)}</div>` : ''}
                   ${definition.supportsType && row.type ? `<div class="helper">${escapeHtml(row.type)}</div>` : ''}
+                  ${definition.supportsSort ? `<div class="helper">Ordem: ${Number(row.sort_order || 0)}</div>` : ''}
                   ${definition.supportsStatus && row.status ? `<div class="helper">Status: ${escapeHtml(row.status)}</div>` : ''}
                   ${renderContentAttachment(definition, row, fileValue)}
                   ${renderContentBody(definition, row, body)}
@@ -1044,6 +1173,11 @@ function renderContentForm(campaignId, definition) {
         <option value="found">found</option>
       </select>
     </div>`
+        : ''
+    }
+    ${
+      definition.supportsSort
+        ? `<div class="field"><label>Ordem</label><input data-content-sort="${definition.table}" type="number" value="0"></div>`
         : ''
     }
     <div class="field">
@@ -1106,6 +1240,12 @@ function bindCampaignFields(campaignId) {
     updateTags();
   });
 
+  document.getElementById('openDmScreenBtn')?.addEventListener('click', () => {
+    state.campaignMode = CAMPAIGN_MODE_DM_SCREEN;
+    ensureSelectedDmScreenPage();
+    render();
+  });
+
   document.getElementById('addMemberBtn')?.addEventListener('click', async () => {
     const userId = document.getElementById('newMemberUserId')?.value?.trim();
     const role = document.getElementById('newMemberRole')?.value || 'player';
@@ -1165,6 +1305,7 @@ function bindCampaignFields(campaignId) {
       const uploadFile = document.querySelector(`[data-content-upload="${table}"]`)?.files?.[0] || null;
       const typeValue = document.querySelector(`[data-content-type="${table}"]`)?.value || null;
       const statusValue = document.querySelector(`[data-content-status="${table}"]`)?.value || null;
+      const sortValue = Number(document.querySelector(`[data-content-sort="${table}"]`)?.value || '0');
 
       if (!title) {
         showToast('Titulo obrigatorio.');
@@ -1223,7 +1364,7 @@ function bindCampaignFields(campaignId) {
       }
       if (table === 'dm_screen_pages') {
         payload.content_type = typeValue || 'markdown';
-        payload.sort_order = 0;
+        payload.sort_order = Number.isFinite(sortValue) ? sortValue : 0;
       }
 
       try {
@@ -1232,6 +1373,9 @@ function bindCampaignFields(campaignId) {
         state.campaignContent[campaignId][table] = mergeRow(state.campaignContent[campaignId][table] || [], row);
         if (table === 'maps') {
           state.mapPins[row.id] = state.mapPins[row.id] || [];
+        }
+        if (table === 'dm_screen_pages') {
+          ensureSelectedDmScreenPage();
         }
         render();
         showToast('Item salvo');
@@ -1626,9 +1770,17 @@ function updateActionVisibility() {
   const selected = getSelectedSheet();
   const selectedCampaign = getSelectedCampaign();
   const editingSheet = state.view === VIEW_SHEETS;
+  const editingCampaignDashboard = state.view === VIEW_CAMPAIGNS && state.campaignMode === CAMPAIGN_MODE_DASHBOARD;
 
   if (el.saveSheetBtn) {
-    el.saveSheetBtn.disabled = editingSheet ? !canEditSheet(selected) || !state.dirty : !canEditCampaign(selectedCampaign) || !state.campaignDirty;
+    el.saveSheetBtn.classList.toggle('hidden', !editingSheet && !editingCampaignDashboard);
+    el.saveSheetBtn.disabled = editingSheet
+      ? !canEditSheet(selected) || !state.dirty
+      : !canEditCampaign(selectedCampaign) || !state.campaignDirty;
+  }
+  if (el.exportPdfBtn) {
+    el.exportPdfBtn.classList.toggle('hidden', !editingSheet);
+    el.exportPdfBtn.disabled = !editingSheet || !selected;
   }
   if (el.toggleActiveBtn) {
     el.toggleActiveBtn.classList.toggle('hidden', !editingSheet || !isCurrentUserDm());
@@ -1653,6 +1805,27 @@ function getSelectedSheet() {
 
 function getSelectedCampaign() {
   return state.campaigns.find((campaign) => campaign.id === state.selectedCampaignId) || null;
+}
+
+function getSortedDmScreenPages(campaignId) {
+  return [...(state.campaignContent[campaignId]?.dm_screen_pages || [])].sort((left, right) => {
+    const sortDelta = Number(left.sort_order || 0) - Number(right.sort_order || 0);
+    if (sortDelta !== 0) return sortDelta;
+    return String(left.title || '').localeCompare(String(right.title || ''));
+  });
+}
+
+function ensureSelectedDmScreenPage() {
+  const campaign = getSelectedCampaign();
+  if (!campaign) return;
+  const pages = getSortedDmScreenPages(campaign.id);
+  if (!pages.length) {
+    state.selectedDmScreenPageId = null;
+    return;
+  }
+  if (!pages.some((page) => page.id === state.selectedDmScreenPageId)) {
+    state.selectedDmScreenPageId = pages[0].id;
+  }
 }
 
 function isCurrentUserDm() {
@@ -1687,7 +1860,12 @@ function canCreateSheet() {
 }
 
 function updateTags() {
-  const selected = state.view === VIEW_SHEETS ? getSelectedSheet() : getSelectedCampaign();
+  const selected =
+    state.view === VIEW_SHEETS
+      ? getSelectedSheet()
+      : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN
+        ? (getSortedDmScreenPages(state.selectedCampaignId || '').find((page) => page.id === state.selectedDmScreenPageId) ?? getSelectedCampaign())
+        : getSelectedCampaign();
   if (el.selectedTag) {
     el.selectedTag.textContent = selected ? selected.name || selected.title : 'Nada selecionado';
   }
@@ -1703,7 +1881,9 @@ function updateTags() {
     }
   }
 
-  setStatus(`${isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player'} · ${state.view === VIEW_SHEETS ? 'Fichas' : 'Campanhas'}`);
+  const workspace =
+    state.view === VIEW_SHEETS ? 'Fichas' : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN ? 'Tela do Mestre' : 'Campanhas';
+  setStatus(`${isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player'} · ${workspace}`);
 }
 
 function setStatus(message) {
@@ -2067,6 +2247,98 @@ function releaseVideoPreviewUrl(sheet) {
   if (sheet) {
     sheet.videoPreviewUrl = null;
   }
+}
+
+async function exportSheetAsPdf(sheet) {
+  const imageUrl = await resolveSheetImageForPrint(sheet);
+  const popup = window.open('', '_blank', 'noopener,noreferrer');
+  if (!popup) {
+    showToast('Nao foi possivel abrir a janela de impressao.');
+    return;
+  }
+
+  popup.document.write(buildPrintableSheetHtml(sheet, imageUrl));
+  popup.document.close();
+  popup.focus();
+  popup.print();
+}
+
+async function resolveSheetImageForPrint(sheet) {
+  if (sheet.imagePreviewUrl) return sheet.imagePreviewUrl;
+  if (sheet.imageSignedUrl) return sheet.imageSignedUrl;
+  if (sheet.imagePath) {
+    await ensureSheetMediaUrls(sheet);
+    return sheet.imageSignedUrl || null;
+  }
+  return null;
+}
+
+function buildPrintableSheetHtml(sheet, imageUrl) {
+  const skills = sheet.skills
+    .map(
+      (skill) => `<tr>
+      <td>${escapeHtml(skill.name)}</td>
+      <td>${Number(skill.base)}</td>
+      <td>${Number(skill.value)}</td>
+      <td>${Math.floor(Number(skill.value) / 2)}</td>
+      <td>${Math.floor(Number(skill.value) / 5)}</td>
+    </tr>`
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+  <html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <title>${escapeHtml(sheet.name)} | Arkham Ledger PDF</title>
+    <style>
+      body{font-family:Georgia,"Times New Roman",serif;color:#111;margin:32px;background:#fff}
+      h1,h2,h3{margin:0 0 10px}
+      .head{display:grid;grid-template-columns:180px 1fr;gap:24px;align-items:start;margin-bottom:24px}
+      .portrait{width:180px;aspect-ratio:3/4;border:1px solid #bbb;display:flex;align-items:center;justify-content:center;overflow:hidden}
+      .portrait img{width:100%;height:100%;object-fit:cover}
+      .meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+      .box{border:1px solid #bbb;padding:10px 12px;border-radius:8px}
+      .label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#555;margin-bottom:4px}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:12px}
+      th{background:#f2efe8}
+      .section{margin-top:24px}
+      .notes{white-space:pre-wrap;line-height:1.5}
+      @media print{body{margin:16px}}
+    </style>
+  </head>
+  <body>
+    <div class="head">
+      <div class="portrait">${imageUrl ? `<img src="${escapeAttribute(imageUrl)}" alt="">` : '<span>Sem retrato</span>'}</div>
+      <div>
+        <h1>${escapeHtml(sheet.name)}</h1>
+        <div>${escapeHtml(sheet.type === 'npc' ? 'NPC' : 'Investigador')}</div>
+        <div class="meta">
+          <div class="box"><div class="label">Idade</div>${sheet.age ?? '-'}</div>
+          <div class="box"><div class="label">Ocupacao</div>${escapeHtml(sheet.occupation || '-')}</div>
+          <div class="box"><div class="label">Origem</div>${escapeHtml(sheet.home || '-')}</div>
+          <div class="box"><div class="label">Campanha</div>${escapeHtml(getCampaignTitle(sheet.campaignId) || '-')}</div>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <h2>Descricao</h2>
+      <div class="box notes">${escapeHtml(sheet.description || 'Sem descricao.')}</div>
+    </div>
+    <div class="section">
+      <h2>Pericias</h2>
+      <table>
+        <thead><tr><th>Pericia</th><th>Base</th><th>Atual</th><th>Dif</th><th>Ext</th></tr></thead>
+        <tbody>${skills}</tbody>
+      </table>
+    </div>
+    <div class="section">
+      <h2>Anotacoes</h2>
+      <div class="box notes">${escapeHtml(sheet.notes || 'Sem anotacoes.')}</div>
+    </div>
+  </body>
+  </html>`;
 }
 
 function downloadJson(fileName, payload) {

@@ -26,3 +26,11 @@ test('index.html is GitHub Pages compatible (loads JS entrypoint)', () => {
   assert.match(html, /<script\s+type="module"\s+src="\.\/src\/main\.js"><\/script>/);
   assert.doesNotMatch(html, /src="\.\/src\/main\.ts"/);
 });
+
+test('main browser app exposes DM screen and printable export flows', () => {
+  const src = readFileSync('src/main.js', 'utf8');
+  assert.match(src, /CAMPAIGN_MODE_DM_SCREEN/);
+  assert.match(src, /renderDmScreen\(/);
+  assert.match(src, /exportSheetAsPdf\(/);
+  assert.match(src, /buildPrintableSheetHtml\(/);
+});

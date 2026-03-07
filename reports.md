@@ -48,13 +48,13 @@
 | Timeline CRUD | Missing | Implemented | Minimal CRUD in campaign dashboard. |
 | Clues CRUD | Missing | Implemented | Minimal CRUD in campaign dashboard. |
 | Handouts CRUD | Missing | Implemented | Minimal CRUD in campaign dashboard. |
-| Maps upload/listing | Missing | Partial | Schema and dashboard entries exist, but no dedicated map viewer or pin placement UI yet. |
-| Map pins | Missing | Partial | Schema and RLS exist; browser UI still missing. |
-| Markdown rendering | Missing | Partial | Storage/editing exists; content is displayed as preformatted text, not rendered markdown. |
-| Mermaid rendering | Missing | Partial | Storage/editing exists; source is displayed as text for now. |
-| DM screen UI | Missing | Partial | DM screen pages CRUD exists inside dashboard; no dedicated live session viewer yet. |
+| Maps upload/listing | Missing | Implemented | Added upload flow plus rendered map detail cards in the campaign dashboard. |
+| Map pins | Missing | Implemented | Added map pin creation, listing, rendering, and removal in the dashboard. |
+| Markdown rendering | Missing | Implemented | Markdown docs, markdown handouts, and markdown DM pages now render in-app. |
+| Mermaid rendering | Missing | Partial | Mermaid source now has a simplified relationship viewer plus source fallback. |
+| DM screen UI | Missing | Implemented | Added dedicated DM screen viewer with ordered page switching and reference page modes. |
 | File validation | Missing | Partial | Added client-side image/video validation for portraits, campaign covers, and character intro video. |
-| PDF export | Missing | Not started | No implementation in this pass. |
+| PDF export | Missing | Implemented | Added printable sheet export plus field mapping document. |
 
 ## Implemented Work
 
@@ -106,6 +106,9 @@
   - member management by user ID
   - character gallery
   - CRUD cards for summaries, timeline, clues, handouts, maps, markdown docs, relationship diagrams, and DM screen pages
+- Added campaign asset uploads and in-app rendering for maps, handouts, clues, markdown, and simplified Mermaid diagrams.
+- Added dedicated DM screen viewer with ordered page tabs and quick reference modes.
+- Added browser-printable PDF export for character sheets and a field mapping document.
 - Added browser-side campaign API helpers in `src/browser/campaignApi.js`.
 
 ### Validation and tests
@@ -120,10 +123,6 @@
 
 ## Remaining Work
 
-- Build a dedicated player map screen and DM map pin placement UI.
-- Render markdown and Mermaid instead of displaying plain source text.
-- Add upload workflows for handout files, clue files, map images, and reusable NPC portrait gallery assets.
 - Tighten storage policies further; current `campaign-assets` and `sheet-media` policies are broader than the DB row-level visibility rules.
-- Add a dedicated DM screen viewer optimized for live session use.
-- Implement PDF export.
 - Add targeted browser/UI tests for the new campaign flows.
+- Upgrade the Mermaid viewer from simplified relationship rendering to full diagram rendering.
