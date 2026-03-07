@@ -56,6 +56,8 @@ test('extended character sheet schema and visibility helpers exist', () => {
   assert.equal(includes('add column if not exists type text not null default \'player_character\''), true);
   assert.equal(includes('add column if not exists campaign_id uuid references public.campaigns'), true);
   assert.equal(includes('add column if not exists archived_at timestamptz'), true);
+  assert.equal(includes('alter table public.clues'), true);
+  assert.equal(includes('alter table public.handouts'), true);
   assert.equal(includes('create or replace function public.can_view_character_sheet'), true);
   assert.equal(includes('create or replace function public.can_read_campaign_content'), true);
   assert.equal(includes('create or replace function public.can_access_campaign_asset_path'), true);
