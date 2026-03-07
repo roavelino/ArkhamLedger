@@ -182,7 +182,8 @@ alter table public.character_sheets
   add column if not exists occupation text,
   add column if not exists description text,
   add column if not exists intro_video_url text,
-  add column if not exists notes text;
+  add column if not exists notes text,
+  add column if not exists archived_at timestamptz;
 
 update public.character_sheets
 set
@@ -276,6 +277,75 @@ as $$
     end;
 $$;
 
+create or replace function public.can_access_campaign_asset_path(actor_uid uuid, asset_name text)
+returns boolean
+language sql
+stable
+as $$
+  select
+    case
+      when actor_uid is null then false
+      when asset_name is null then false
+      when (storage.foldername(asset_name))[1] = 'npc-gallery' then
+        public.is_dm(actor_uid) and (storage.foldername(asset_name))[2] = actor_uid::text
+      else exists(
+        select 1
+        from public.campaigns c
+        where c.id::text = (storage.foldername(asset_name))[1]
+          and public.is_campaign_member(actor_uid, c.id)
+      )
+    end;
+$$;
+
+create or replace function public.can_manage_campaign_asset_path(actor_uid uuid, asset_name text)
+returns boolean
+language sql
+stable
+as $$
+  select
+    case
+      when actor_uid is null then false
+      when asset_name is null then false
+      when (storage.foldername(asset_name))[1] = 'npc-gallery' then
+        public.is_dm(actor_uid) and (storage.foldername(asset_name))[2] = actor_uid::text
+      else exists(
+        select 1
+        from public.campaigns c
+        where c.id::text = (storage.foldername(asset_name))[1]
+          and public.is_campaign_dm(actor_uid, c.id)
+      )
+    end;
+$$;
+
+create or replace function public.can_access_sheet_media_path(actor_uid uuid, asset_name text)
+returns boolean
+language sql
+stable
+as $$
+  select exists(
+    select 1
+    from public.character_sheets cs
+    where cs.id::text = (storage.foldername(asset_name))[2]
+      and public.can_view_character_sheet(actor_uid, cs.owner_id, cs.type, cs.campaign_id, cs.sheet_data)
+  );
+$$;
+
+create or replace function public.can_manage_sheet_media_path(actor_uid uuid, asset_name text)
+returns boolean
+language sql
+stable
+as $$
+  select exists(
+    select 1
+    from public.character_sheets cs
+    where cs.id::text = (storage.foldername(asset_name))[2]
+      and (
+        public.is_dm(actor_uid)
+        or cs.owner_id = actor_uid
+      )
+  );
+$$;
+
 create or replace function public.validate_visibility_assignment()
 returns trigger
 language plpgsql
@@ -330,6 +400,7 @@ create table if not exists public.clues (
   visibility text not null default 'dm_only' check (visibility in ('dm_only', 'shared_all', 'shared_player')),
   shared_with_user_id uuid references public.users(id) on delete set null,
   status text not null default 'hidden' check (status in ('hidden', 'available', 'found')),
+  archived_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -343,6 +414,7 @@ create table if not exists public.handouts (
   file_url text,
   visibility text not null default 'dm_only' check (visibility in ('dm_only', 'shared_all', 'shared_player')),
   shared_with_user_id uuid references public.users(id) on delete set null,
+  archived_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
@@ -649,13 +721,41 @@ values ('sheet-media', 'sheet-media', false)
 on conflict (id) do nothing;
 
 drop policy if exists "campaign_assets_rw_authenticated" on storage.objects;
-create policy "campaign_assets_rw_authenticated"
+drop policy if exists "campaign_assets_read_scoped" on storage.objects;
+drop policy if exists "campaign_assets_write_scoped" on storage.objects;
+create policy "campaign_assets_read_scoped"
+  on storage.objects for select
+  using (
+    bucket_id = 'campaign-assets'
+    and public.can_access_campaign_asset_path(auth.uid(), name)
+  );
+create policy "campaign_assets_write_scoped"
   on storage.objects for all
-  using (bucket_id = 'campaign-assets' and auth.role() = 'authenticated')
-  with check (bucket_id = 'campaign-assets' and auth.role() = 'authenticated');
+  using (
+    bucket_id = 'campaign-assets'
+    and public.can_manage_campaign_asset_path(auth.uid(), name)
+  )
+  with check (
+    bucket_id = 'campaign-assets'
+    and public.can_manage_campaign_asset_path(auth.uid(), name)
+  );
 
 drop policy if exists "sheet_media_rw_authenticated" on storage.objects;
-create policy "sheet_media_rw_authenticated"
+drop policy if exists "sheet_media_read_scoped" on storage.objects;
+drop policy if exists "sheet_media_write_scoped" on storage.objects;
+create policy "sheet_media_read_scoped"
+  on storage.objects for select
+  using (
+    bucket_id = 'sheet-media'
+    and public.can_access_sheet_media_path(auth.uid(), name)
+  );
+create policy "sheet_media_write_scoped"
   on storage.objects for all
-  using (bucket_id = 'sheet-media' and auth.role() = 'authenticated')
-  with check (bucket_id = 'sheet-media' and auth.role() = 'authenticated');
+  using (
+    bucket_id = 'sheet-media'
+    and public.can_manage_sheet_media_path(auth.uid(), name)
+  )
+  with check (
+    bucket_id = 'sheet-media'
+    and public.can_manage_sheet_media_path(auth.uid(), name)
+  );

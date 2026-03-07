@@ -75,11 +75,12 @@ export async function removeCampaignMember(client, memberId) {
 }
 
 export async function listCampaignContentRows(client, table, campaignId) {
-  const { data, error } = await client
-    .from(table)
-    .select('*')
-    .eq('campaign_id', campaignId)
-    .order('updated_at', { ascending: false });
+  let query = client.from(table).select('*').eq('campaign_id', campaignId).order('updated_at', { ascending: false });
+  if (table === 'clues' || table === 'handouts') {
+    query = query.is('archived_at', null);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return data || [];

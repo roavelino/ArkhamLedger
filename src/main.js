@@ -342,12 +342,29 @@ function bindEvents() {
 
   el.deleteBtn?.addEventListener('click', async () => {
     if (state.view === VIEW_CAMPAIGNS) {
-      showToast('Remocao de campanhas nao foi automatizada nesta iteracao.');
+      const campaign = getSelectedCampaign();
+      if (!campaign || !canEditCampaign(campaign)) return;
+      campaign.status = 'archived';
+      campaign.updatedAt = new Date().toISOString();
+      state.campaignDirty = true;
+      await saveSelectedCampaign();
+      showToast('Campanha arquivada');
       return;
     }
 
     const selected = getSelectedSheet();
     if (!selected || !canEditSheet(selected)) return;
+    if (selected.type === 'npc') {
+      if (!confirm(`Arquivar NPC "${selected.name}"?`)) return;
+      selected.archivedAt = new Date().toISOString();
+      selected.updatedAt = new Date().toISOString();
+      await saveSelectedSheet('NPC arquivado');
+      state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
+      state.selectedId = state.sheets[0]?.id || null;
+      render();
+      return;
+    }
+
     if (!confirm(`Excluir ficha "${selected.name}"?`)) return;
 
     state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
@@ -1389,6 +1406,20 @@ function bindCampaignFields(campaignId) {
     button.addEventListener('click', async () => {
       const [table, rowId] = button.getAttribute('data-delete-content').split(':');
       try {
+        if (table === 'clues' || table === 'handouts') {
+          const current = (state.campaignContent[campaignId][table] || []).find((row) => row.id === rowId);
+          if (!current) return;
+          const archived = await upsertCampaignContentRow(state.sync.client, table, {
+            ...current,
+            archived_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+          state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== archived.id);
+          render();
+          showToast('Item arquivado');
+          return;
+        }
+
         await deleteCampaignContentRow(state.sync.client, table, rowId);
         state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== rowId);
         render();
@@ -1905,6 +1936,7 @@ function serializeSheet(sheet, userId) {
     description: sheet.description || null,
     intro_video_url: sheet.introVideoUrl || null,
     notes: sheet.notes || null,
+    archived_at: sheet.archivedAt || null,
     sheet_data: {
       home: sheet.home,
       notes: sheet.notes,
@@ -1938,6 +1970,7 @@ function deserializeSheet(row) {
     age: Number(row.age ?? data.age ?? 30),
     description: String(row.description || data.description || ''),
     notes: String(row.notes || data.notes || ''),
+    archivedAt: typeof row.archived_at === 'string' ? row.archived_at : null,
     playerVisible: Boolean(data.player_visible),
     skills: normalizeSkills(Array.isArray(data.skills) ? data.skills : null),
     createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
@@ -1983,6 +2016,7 @@ function createBlankSheet(ownerId) {
     age: 32,
     description: '',
     notes: '',
+    archivedAt: null,
     playerVisible: false,
     skills: defaultCoc7eSkills(),
     createdAt: now,

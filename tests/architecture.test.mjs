@@ -34,3 +34,11 @@ test('main browser app exposes DM screen and printable export flows', () => {
   assert.match(src, /exportSheetAsPdf\(/);
   assert.match(src, /buildPrintableSheetHtml\(/);
 });
+
+test('browser app includes archive handling for campaign content and NPCs', () => {
+  const src = readFileSync('src/main.js', 'utf8');
+  assert.match(src, /Campanha arquivada/);
+  assert.match(src, /NPC arquivado/);
+  assert.match(src, /Item arquivado/);
+  assert.match(src, /archivedAt/);
+});

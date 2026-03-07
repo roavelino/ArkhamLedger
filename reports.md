@@ -55,6 +55,7 @@
 | DM screen UI | Missing | Implemented | Added dedicated DM screen viewer with ordered page switching and reference page modes. |
 | File validation | Missing | Partial | Added client-side image/video validation for portraits, campaign covers, and character intro video. |
 | PDF export | Missing | Implemented | Added printable sheet export plus field mapping document. |
+| Archive support | Missing | Implemented | Added soft archive for campaigns, NPC sheets, clues, and handouts. |
 
 ## Implemented Work
 
@@ -109,6 +110,8 @@
 - Added campaign asset uploads and in-app rendering for maps, handouts, clues, markdown, and simplified Mermaid diagrams.
 - Added dedicated DM screen viewer with ordered page tabs and quick reference modes.
 - Added browser-printable PDF export for character sheets and a field mapping document.
+- Added soft archive behavior for campaigns, NPCs, clues, and handouts.
+- Tightened storage policies for `campaign-assets` and `sheet-media` to scoped path-based access helpers instead of broad authenticated access.
 - Added browser-side campaign API helpers in `src/browser/campaignApi.js`.
 
 ### Validation and tests
@@ -123,6 +126,5 @@
 
 ## Remaining Work
 
-- Tighten storage policies further; current `campaign-assets` and `sheet-media` policies are broader than the DB row-level visibility rules.
 - Add targeted browser/UI tests for the new campaign flows.
 - Upgrade the Mermaid viewer from simplified relationship rendering to full diagram rendering.
