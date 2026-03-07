@@ -8,14 +8,136 @@ import {
   uploadCharacterSheetImage,
   upsertCharacterSheet
 } from './browser/characterSheetsApi.js';
+import {
+  CAMPAIGN_CONTENT_TABLES,
+  campaignAssetBucket,
+  createSignedAssetUrl,
+  deleteMapPin,
+  listMapPins,
+  listCampaignContentRows,
+  listCampaignMembers,
+  listCampaignsForUser,
+  listNpcGalleryAssets,
+  removeCampaignMember,
+  sheetMediaBucket,
+  upsertMapPin,
+  uploadCampaignAsset,
+  uploadNpcGalleryAsset,
+  uploadSheetMedia,
+  upsertNpcGalleryAsset,
+  upsertCampaign,
+  upsertCampaignContentRow,
+  upsertCampaignMember,
+  deleteCampaignContentRow
+} from './browser/campaignApi.js';
 
-const STORAGE_KEY = 'arkham-ledger:sheets:v1';
+const STORAGE_KEY = 'arkham-ledger:sheets:v2';
+const VIEW_SHEETS = 'sheets';
+const VIEW_CAMPAIGNS = 'campaigns';
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const DOCUMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'text/markdown'];
+const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_VIDEO_SIZE = 20 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024;
+
+const CONTENT_DEFINITIONS = [
+  {
+    table: 'session_summaries',
+    label: 'Resumos de Sessao',
+    bodyKey: 'summary_markdown',
+    bodyLabel: 'Resumo em markdown',
+    supportsFile: false,
+    supportsType: false,
+    supportsStatus: false
+  },
+  {
+    table: 'timeline_entries',
+    label: 'Linha do Tempo',
+    bodyKey: 'description',
+    bodyLabel: 'Descricao',
+    supportsFile: false,
+    supportsType: true,
+    typeLabel: 'Tipo do evento',
+    supportsStatus: false
+  },
+  {
+    table: 'clues',
+    label: 'Pistas',
+    bodyKey: 'description',
+    bodyLabel: 'Descricao',
+    supportsFile: true,
+    fileLabel: 'Imagem ou PDF',
+    supportsType: false,
+    supportsStatus: true
+  },
+  {
+    table: 'handouts',
+    label: 'Handouts',
+    bodyKey: 'content_text',
+    bodyLabel: 'Conteudo',
+    supportsFile: true,
+    fileLabel: 'Arquivo opcional',
+    supportsType: true,
+    typeLabel: 'Tipo',
+    typeOptions: ['text', 'markdown', 'image', 'pdf'],
+    supportsStatus: false
+  },
+  {
+    table: 'maps',
+    label: 'Mapas',
+    bodyKey: 'description',
+    bodyLabel: 'Descricao',
+    supportsFile: true,
+    fileLabel: 'Imagem do mapa',
+    fileKey: 'image_url',
+    supportsType: false,
+    supportsStatus: false
+  },
+  {
+    table: 'markdown_documents',
+    label: 'Documentos Markdown',
+    bodyKey: 'markdown_content',
+    bodyLabel: 'Markdown',
+    supportsFile: false,
+    supportsType: false,
+    supportsStatus: false
+  },
+  {
+    table: 'relationship_diagrams',
+    label: 'Diagramas',
+    bodyKey: 'mermaid_source',
+    bodyLabel: 'Codigo Mermaid',
+    supportsFile: false,
+    supportsType: false,
+    supportsStatus: false
+  },
+  {
+    table: 'dm_screen_pages',
+    label: 'Tela do Mestre',
+    bodyKey: 'content_json_or_text',
+    bodyLabel: 'Conteudo',
+    supportsFile: false,
+    supportsType: true,
+    typeLabel: 'Tipo de pagina',
+    typeOptions: ['markdown', 'quick rules', 'session notes', 'npc list reference', 'clue list reference'],
+    supportsStatus: false
+  }
+];
 
 const state = {
+  view: VIEW_SHEETS,
   sheets: [],
+  campaigns: [],
   selectedId: null,
+  selectedCampaignId: null,
   search: '',
   dirty: false,
+  campaignDirty: false,
+  campaignMembers: {},
+  campaignContent: {},
+  mapPins: {},
+  npcGallery: [],
   sync: {
     client: null,
     user: null,
@@ -32,10 +154,6 @@ const el = {
   importBtn: document.getElementById('importBtn'),
   importFile: document.getElementById('importFile'),
   exportAllBtn: document.getElementById('exportAllBtn'),
-  quickRollBtn: document.getElementById('quickRollBtn'),
-  viewMode: document.getElementById('viewMode'),
-  expandAllBtn: document.getElementById('expandAllBtn'),
-  collapseAllBtn: document.getElementById('collapseAllBtn'),
   sheetSearch: document.getElementById('sheetSearch'),
   searchContainer: document.querySelector('.search'),
   sheetList: document.getElementById('sheetList'),
@@ -45,7 +163,9 @@ const el = {
   viewRoot: document.getElementById('viewRoot'),
   topTags: document.querySelector('.toolbar .top-actions:first-child'),
   topActions: document.querySelector('.toolbar .top-actions:last-child'),
-  toast: document.getElementById('toast')
+  sidebarControls: document.querySelector('.sidebar-controls'),
+  toast: document.getElementById('toast'),
+  brandSub: document.querySelector('.brand .sub')
 };
 
 void initialize();
@@ -68,8 +188,9 @@ async function initialize() {
   }
 
   state.sync.user = session.user;
+
   await loadProfile();
-  await loadSheetsFromSupabase();
+  await Promise.all([loadSheetsFromSupabase(), loadCampaignsFromSupabase()]);
   state.sync.connected = true;
 
   injectToolbarButtons();
@@ -79,7 +200,18 @@ async function initialize() {
 }
 
 function injectToolbarButtons() {
-  if (!el.topActions) return;
+  if (!el.topTags || !el.topActions || document.getElementById('viewSwitch')) {
+    return;
+  }
+
+  const viewSwitch = document.createElement('div');
+  viewSwitch.className = 'top-actions';
+  viewSwitch.id = 'viewSwitch';
+  viewSwitch.innerHTML = `
+    <button class="btn secondary" id="switchSheetsBtn" type="button">Fichas</button>
+    <button class="btn secondary" id="switchCampaignsBtn" type="button">Campanhas</button>
+  `;
+  el.topTags.prepend(viewSwitch);
 
   const saveButton = document.createElement('button');
   saveButton.className = 'btn ok';
@@ -99,14 +231,33 @@ function injectToolbarButtons() {
   logoutButton.className = 'btn ghost';
   logoutButton.id = 'logoutBtn';
   logoutButton.textContent = 'Sair';
-  if (el.topTags) {
-    el.topTags.appendChild(logoutButton);
-  }
+  el.topTags.appendChild(logoutButton);
   el.logoutBtn = logoutButton;
 }
 
 function bindEvents() {
-  el.newSheetBtn?.addEventListener('click', () => {
+  document.getElementById('switchSheetsBtn')?.addEventListener('click', () => {
+    state.view = VIEW_SHEETS;
+    render();
+  });
+
+  document.getElementById('switchCampaignsBtn')?.addEventListener('click', async () => {
+    state.view = VIEW_CAMPAIGNS;
+    await ensureSelectedCampaignLoaded();
+    render();
+  });
+
+  el.newSheetBtn?.addEventListener('click', async () => {
+    if (state.view === VIEW_CAMPAIGNS) {
+      if (!isCurrentUserDm()) return;
+      const campaign = createBlankCampaign();
+      state.campaigns.unshift(campaign);
+      state.selectedCampaignId = campaign.id;
+      state.campaignDirty = true;
+      render();
+      return;
+    }
+
     if (!canCreateSheet()) {
       showToast('Players so podem criar ficha sem personagem ativo.');
       return;
@@ -119,12 +270,35 @@ function bindEvents() {
     render();
   });
 
+  el.importBtn?.addEventListener('click', async () => {
+    if (state.view !== VIEW_SHEETS || !isCurrentUserDm()) return;
+    const npc = createQuickNpcDraft();
+    state.sheets.unshift(npc);
+    state.selectedId = npc.id;
+    state.dirty = true;
+    render();
+  });
+
+  el.exportAllBtn?.addEventListener('click', async () => {
+    if (state.view !== VIEW_SHEETS || !isCurrentUserDm()) return;
+    const generated = createGeneratedNpc();
+    state.sheets.unshift(generated);
+    state.selectedId = generated.id;
+    state.dirty = true;
+    render();
+    showToast('Rascunho de NPC gerado');
+  });
+
   el.saveSheetBtn?.addEventListener('click', async () => {
+    if (state.view === VIEW_CAMPAIGNS) {
+      await saveSelectedCampaign();
+      return;
+    }
     await saveSelectedSheet();
   });
 
   el.toggleActiveBtn?.addEventListener('click', async () => {
-    if (!isCurrentUserDm()) return;
+    if (state.view !== VIEW_SHEETS || !isCurrentUserDm()) return;
     const selected = getSelectedSheet();
     if (!selected) return;
 
@@ -135,7 +309,7 @@ function bindEvents() {
   });
 
   el.duplicateBtn?.addEventListener('click', () => {
-    if (!isCurrentUserDm()) return;
+    if (state.view !== VIEW_SHEETS || !isCurrentUserDm()) return;
     const selected = getSelectedSheet();
     if (!selected) return;
 
@@ -143,7 +317,6 @@ function bindEvents() {
       ...selected,
       id: crypto.randomUUID(),
       name: `${selected.name} (copia)`,
-      ownerId: selected.ownerId,
       isActive: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -155,17 +328,20 @@ function bindEvents() {
   });
 
   el.deleteBtn?.addEventListener('click', async () => {
-    if (!canEditSheet(getSelectedSheet())) return;
-    const selected = getSelectedSheet();
-    if (!selected) return;
+    if (state.view === VIEW_CAMPAIGNS) {
+      showToast('Remocao de campanhas nao foi automatizada nesta iteracao.');
+      return;
+    }
 
+    const selected = getSelectedSheet();
+    if (!selected || !canEditSheet(selected)) return;
     if (!confirm(`Excluir ficha "${selected.name}"?`)) return;
 
     state.sheets = state.sheets.filter((sheet) => sheet.id !== selected.id);
     state.selectedId = state.sheets[0]?.id || null;
 
     if (state.sync.connected && selected.id) {
-      await deleteRemoteSheet(selected.id);
+      await deleteCharacterSheet(state.sync.client, selected.id);
     }
 
     state.dirty = false;
@@ -174,45 +350,23 @@ function bindEvents() {
   });
 
   el.exportBtn?.addEventListener('click', () => {
+    if (state.view === VIEW_CAMPAIGNS) {
+      const campaign = getSelectedCampaign();
+      if (!campaign) return;
+      downloadJson(`${slugify(campaign.title)}-campanha.json`, {
+        campaign,
+        members: state.campaignMembers[campaign.id] || [],
+        content: state.campaignContent[campaign.id] || {}
+      });
+      showToast('Campanha exportada');
+      return;
+    }
+
     const selected = getSelectedSheet();
     if (!selected) return;
 
     downloadJson(`${slugify(selected.name)}.json`, selected);
     showToast('Ficha exportada');
-  });
-
-  el.importBtn?.addEventListener('click', () => {
-    if (!isCurrentUserDm()) return;
-    el.importFile?.click();
-  });
-
-  el.importFile?.addEventListener('change', async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const parsed = JSON.parse(await file.text());
-      const imported = normalizeImportedSheets(parsed, state.sync.user?.id ?? null);
-      if (!imported.length) {
-        throw new Error('Nenhuma ficha valida encontrada no JSON.');
-      }
-
-      state.sheets = imported;
-      state.selectedId = imported[0].id;
-      state.dirty = true;
-      render();
-      showToast('Importacao concluida. Clique em salvar para persistir.');
-    } catch (error) {
-      showToast(error?.message || 'Falha ao importar');
-    } finally {
-      event.target.value = '';
-    }
-  });
-
-  el.exportAllBtn?.addEventListener('click', () => {
-    if (!isCurrentUserDm()) return;
-    downloadJson('arkham-ledger-backup.json', state.sheets);
-    showToast('Backup exportado');
   });
 
   el.sheetSearch?.addEventListener('input', (event) => {
@@ -238,19 +392,102 @@ async function loadSheetsFromSupabase() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
 }
 
+async function loadCampaignsFromSupabase() {
+  const rows = await listCampaignsForUser(state.sync.client, state.sync.user.id, state.sync.profile.role);
+  state.campaigns = rows.map(deserializeCampaign);
+  state.selectedCampaignId = state.campaigns[0]?.id || null;
+  await ensureSelectedCampaignLoaded();
+}
+
+async function ensureSelectedCampaignLoaded() {
+  const selected = getSelectedCampaign();
+  if (!selected || state.campaignContent[selected.id]) {
+    return;
+  }
+
+  const [members, ...contentLists] = await Promise.all([
+    listCampaignMembers(state.sync.client, selected.id),
+    ...CAMPAIGN_CONTENT_TABLES.map((table) => listCampaignContentRows(state.sync.client, table, selected.id))
+  ]);
+
+  state.campaignMembers[selected.id] = members;
+  state.campaignContent[selected.id] = {};
+  CAMPAIGN_CONTENT_TABLES.forEach((table, index) => {
+    state.campaignContent[selected.id][table] = contentLists[index];
+  });
+
+  const maps = state.campaignContent[selected.id].maps || [];
+  if (maps.length) {
+    const pinLists = await Promise.all(maps.map((mapRow) => listMapPins(state.sync.client, mapRow.id)));
+    maps.forEach((mapRow, index) => {
+      state.mapPins[mapRow.id] = pinLists[index];
+    });
+  }
+}
+
+async function ensureNpcGalleryLoaded() {
+  if (!isCurrentUserDm() || state.npcGallery.length) {
+    return;
+  }
+
+  const rows = await listNpcGalleryAssets(state.sync.client, state.sync.user.id);
+  state.npcGallery = rows.map((row) => ({
+    ...row,
+    signedUrl: null
+  }));
+
+  await Promise.all(
+    state.npcGallery.map(async (asset) => {
+      asset.signedUrl = await resolveAssetUrl(asset.image_url);
+    })
+  );
+}
+
 function render() {
+  renderSidebarControls();
   renderList();
-  renderSheet();
+  renderMain();
   updateTags();
   updateActionVisibility();
 }
 
+function renderSidebarControls() {
+  if (!el.newSheetBtn || !el.importBtn || !el.exportAllBtn || !el.brandSub) return;
+
+  if (state.view === VIEW_CAMPAIGNS) {
+    el.brandSub.textContent = 'Campanhas, jogadores e investigacao';
+    el.newSheetBtn.textContent = 'Nova campanha';
+    el.newSheetBtn.classList.toggle('hidden', !isCurrentUserDm());
+    el.importBtn.classList.add('hidden');
+    el.exportAllBtn.classList.add('hidden');
+    el.sheetSearch.placeholder = 'Buscar campanha...';
+    return;
+  }
+
+  el.brandSub.textContent = 'Fichas, NPCs e revelacoes';
+  el.newSheetBtn.textContent = 'Nova ficha';
+  el.newSheetBtn.classList.remove('hidden');
+  el.importBtn.textContent = 'NPC rapido';
+  el.exportAllBtn.textContent = 'Gerar NPC';
+  el.importBtn.classList.toggle('hidden', !isCurrentUserDm());
+  el.exportAllBtn.classList.toggle('hidden', !isCurrentUserDm());
+  el.sheetSearch.placeholder = 'Buscar ficha...';
+}
+
 function renderList() {
   if (!el.sheetList) return;
+  if (state.view === VIEW_CAMPAIGNS) {
+    renderCampaignList();
+    return;
+  }
 
   const filtered = state.sheets.filter((sheet) => {
     if (!state.search) return true;
-    return sheet.name.toLowerCase().includes(state.search);
+    return [sheet.name, sheet.occupation, getCampaignTitle(sheet.campaignId)]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(state.search);
   });
 
   el.sheetList.innerHTML = '';
@@ -260,8 +497,9 @@ function renderList() {
     item.type = 'button';
     item.innerHTML = `<div class="title">${escapeHtml(sheet.name)}</div>
       <div class="meta">
-        <span>${escapeHtml(sheet.occupation)}</span>
-        <span>${sheet.isActive ? 'Ativa' : 'Inativa'}</span>
+        <span>${sheet.type === 'npc' ? 'NPC' : 'Investigador'}</span>
+        <span>${escapeHtml(sheet.occupation || 'Sem ocupacao')}</span>
+        <span>${escapeHtml(getCampaignTitle(sheet.campaignId) || 'Sem campanha')}</span>
       </div>`;
     item.addEventListener('click', () => {
       state.selectedId = sheet.id;
@@ -272,56 +510,135 @@ function renderList() {
   }
 }
 
-function renderSheet() {
-  if (!el.viewRoot) return;
+function renderCampaignList() {
+  const filtered = state.campaigns.filter((campaign) => {
+    if (!state.search) return true;
+    return [campaign.title, campaign.publicSummary, campaign.status].join(' ').toLowerCase().includes(state.search);
+  });
 
+  el.sheetList.innerHTML = '';
+  for (const campaign of filtered) {
+    const item = document.createElement('button');
+    item.className = `sheet-item${campaign.id === state.selectedCampaignId ? ' active' : ''}`;
+    item.type = 'button';
+    item.innerHTML = `<div class="title">${escapeHtml(campaign.title)}</div>
+      <div class="meta">
+        <span>${escapeHtml(campaign.status)}</span>
+        <span>${campaign.ownerUserId === state.sync.user.id ? 'Mestre' : 'Jogador'}</span>
+      </div>`;
+    item.addEventListener('click', async () => {
+      state.selectedCampaignId = campaign.id;
+      await ensureSelectedCampaignLoaded();
+      render();
+    });
+    el.sheetList.appendChild(item);
+  }
+}
+
+function renderMain() {
+  if (!el.viewRoot) return;
+  if (state.view === VIEW_CAMPAIGNS) {
+    renderCampaign();
+    return;
+  }
+  renderSheet();
+}
+
+function renderSheet() {
   const selected = getSelectedSheet();
   if (!selected) {
+    el.viewRoot.className = 'view-root focus-view';
     el.viewRoot.innerHTML = '<article class="sheet-card"><div class="sheet-body"><p>Nenhuma ficha encontrada.</p></div></article>';
+    return;
+  }
+
+  if (selected.type === 'npc' && !canEditSheet(selected) && !isCurrentUserDm()) {
+    renderNpcMiniProfile(selected);
     return;
   }
 
   const editable = canEditSheet(selected);
   const disabled = editable ? '' : 'disabled';
+  const videoUrl = selected.videoPreviewUrl || selected.videoSignedUrl || selected.introVideoUrl;
+  const galleryMarkup =
+    editable && isCurrentUserDm() && selected.type === 'npc'
+      ? renderNpcGallerySection(selected)
+      : '';
 
   el.viewRoot.className = 'view-root focus-view';
   el.viewRoot.innerHTML = `<article class="sheet-card" style="width:min(1200px,100%)">
     <header class="card-header">
       <h2>${escapeHtml(selected.name)}</h2>
-      <div class="subtitle">Investigador · ${selected.isActive ? 'Ativa' : 'Inativa'}</div>
+      <div class="subtitle">${selected.type === 'npc' ? 'NPC' : 'Investigador'} · ${selected.isActive ? 'Ativa' : 'Inativa'}</div>
     </header>
     <div class="sheet-body">
       <section class="section">
         <h3>Dados Principais</h3>
         <div class="portrait-panel">
-          <div class="portrait-preview">
-            ${renderSheetImage(selected)}
-          </div>
+          <div class="portrait-preview">${renderSheetImage(selected)}</div>
           <div class="portrait-actions">
-            ${editable ? '<div class="field"><label>Foto do investigador</label><input id="fieldImage" type="file" accept="image/*"></div>' : ''}
-            <div class="helper">A imagem e enviada ao Supabase somente ao clicar em salvar.</div>
+            ${editable ? '<div class="field"><label>Retrato</label><input id="fieldImage" type="file" accept="image/*"></div>' : ''}
+            ${editable ? '<div class="field"><label>Video curto</label><input id="fieldVideo" type="file" accept="video/*"></div>' : ''}
+            <div class="helper">Imagens aceitas: JPG, PNG, WEBP, GIF ate 5 MB. Videos: MP4, WEBM ou MOV ate 20 MB.</div>
+          </div>
+        </div>
+        ${videoUrl ? `<div class="section"><h3>Intro</h3><video controls style="width:100%;border-radius:12px;max-height:260px" src="${escapeAttribute(videoUrl)}"></video></div>` : ''}
+        <div class="grid-2">
+          <div class="field"><label>Nome</label><input id="fieldName" value="${escapeHtml(selected.name)}" ${disabled}></div>
+          <div class="field"><label>Ocupacao</label><input id="fieldOccupation" value="${escapeHtml(selected.occupation || '')}" ${disabled}></div>
+          <div class="field"><label>Origem</label><input id="fieldHome" value="${escapeHtml(selected.home)}" ${disabled}></div>
+          <div class="field"><label>Idade</label><input id="fieldAge" type="number" value="${selected.age || ''}" ${disabled}></div>
+          <div class="field">
+            <label>Tipo</label>
+            <select id="fieldType" ${!isCurrentUserDm() ? 'disabled' : ''}>
+              <option value="player_character" ${selected.type === 'player_character' ? 'selected' : ''}>Investigador</option>
+              <option value="npc" ${selected.type === 'npc' ? 'selected' : ''}>NPC</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Campanha</label>
+            <select id="fieldCampaign" ${!isCurrentUserDm() ? 'disabled' : ''}>
+              <option value="">Sem campanha</option>
+              ${state.campaigns
+                .map(
+                  (campaign) =>
+                    `<option value="${escapeAttribute(campaign.id)}" ${selected.campaignId === campaign.id ? 'selected' : ''}>${escapeHtml(campaign.title)}</option>`
+                )
+                .join('')}
+            </select>
           </div>
         </div>
         <div class="grid-2">
-          <div class="field"><label>Nome</label><input id="fieldName" value="${escapeHtml(selected.name)}" ${disabled}></div>
-          <div class="field"><label>Ocupacao</label><input id="fieldOccupation" value="${escapeHtml(selected.occupation)}" ${disabled}></div>
-          <div class="field"><label>Origem</label><input id="fieldHome" value="${escapeHtml(selected.home)}" ${disabled}></div>
-          <div class="field"><label>Idade</label><input id="fieldAge" type="number" value="${selected.age}" ${disabled}></div>
+          <div class="field"><label>Descricao Curta</label><textarea id="fieldDescription" ${disabled}>${escapeHtml(selected.description || '')}</textarea></div>
+          <div class="field"><label>Anotacoes</label><textarea id="fieldNotes" ${disabled}>${escapeHtml(selected.notes || '')}</textarea></div>
         </div>
+        ${
+          isCurrentUserDm()
+            ? `<label class="tag"><input id="fieldPlayerVisible" type="checkbox" ${selected.playerVisible ? 'checked' : ''}> Revelar mini perfil do NPC para jogadores</label>`
+            : ''
+        }
       </section>
-      <section class="section">
-        <h3>Anotacoes</h3>
-        <textarea id="fieldNotes" ${disabled}>${escapeHtml(selected.notes)}</textarea>
-      </section>
-      <section class="section">
+      ${galleryMarkup}
+      ${
+        selected.type === 'npc'
+          ? ''
+          : `<section class="section">
         <h3>Pericias (CoC 7e)</h3>
         <div class="skills">${selected.skills.map((skill, idx) => renderSkill(skill, idx, editable)).join('')}</div>
-      </section>
-      ${editable ? '<button id="saveInsideBtn" class="btn ok">Salvar Ficha</button>' : ''}
+      </section>`
+      }
+      ${editable ? '<button id="saveInsideBtn" class="btn ok">Salvar</button>' : ''}
     </div>
   </article>`;
 
   if (editable) {
+    if (selected.type === 'npc' && isCurrentUserDm()) {
+      void ensureNpcGalleryLoaded().then(() => {
+        if (state.selectedId === selected.id) {
+          render();
+        }
+      });
+    }
     bindSheetFields(selected.id);
     document.getElementById('saveInsideBtn')?.addEventListener('click', async () => {
       await saveSelectedSheet();
@@ -329,11 +646,60 @@ function renderSheet() {
   }
 }
 
+function renderNpcGallerySection(sheet) {
+  return `<section class="section">
+    <h3>Galeria de Retratos de NPC</h3>
+    <div class="helper">Use uma imagem reutilizavel para criar NPCs mais rapido ou envie um novo retrato para a biblioteca.</div>
+    <div class="row" style="margin:10px 0 14px">
+      <input id="npcGalleryUpload" type="file" accept="image/*" style="flex:1;min-width:220px">
+      <input id="npcGalleryLabel" placeholder="Rotulo opcional" style="flex:1;min-width:180px">
+      <button id="saveNpcGalleryAssetBtn" class="btn secondary" type="button">Salvar na galeria</button>
+    </div>
+    ${
+      state.npcGallery.length
+        ? `<div class="grid-4">${state.npcGallery.map((asset) => renderNpcGalleryAsset(asset, sheet)).join('')}</div>`
+        : '<p class="muted">Nenhum retrato salvo na galeria.</p>'
+    }
+  </section>`;
+}
+
+function renderNpcGalleryAsset(asset, sheet) {
+  return `<button class="section" type="button" data-pick-gallery-image="${escapeAttribute(asset.id)}" style="text-align:left">
+    <div class="portrait-preview" style="width:100%;aspect-ratio:1/1;margin-bottom:10px">
+      ${asset.signedUrl ? `<img src="${escapeAttribute(asset.signedUrl)}" alt="">` : '<span>Carregando</span>'}
+    </div>
+    <strong>${escapeHtml(asset.label || 'Retrato sem rotulo')}</strong>
+    <div class="helper">${escapeHtml(formatGalleryTags(asset.tags_json))}</div>
+    <div class="helper">${sheet.imagePath === asset.image_url ? 'Selecionado neste NPC' : 'Toque para aplicar ao NPC atual'}</div>
+  </button>`;
+}
+
+function renderNpcMiniProfile(sheet) {
+  const videoUrl = sheet.videoPreviewUrl || sheet.videoSignedUrl || sheet.introVideoUrl;
+  el.viewRoot.className = 'view-root focus-view';
+  el.viewRoot.innerHTML = `<article class="sheet-card" style="width:min(760px,100%)">
+    <header class="card-header">
+      <h2>${escapeHtml(sheet.name)}</h2>
+      <div class="subtitle">NPC revelado</div>
+    </header>
+    <div class="sheet-body">
+      <div class="portrait-panel">
+        <div class="portrait-preview">${renderSheetImage(sheet)}</div>
+        <div class="portrait-actions">
+          <div class="field"><label>Descricao</label><textarea disabled>${escapeHtml(sheet.description || 'Sem descricao revelada.')}</textarea></div>
+          <div class="helper">A ficha completa permanece restrita ao mestre. Jogadores veem apenas este mini perfil.</div>
+        </div>
+      </div>
+      ${videoUrl ? `<video controls style="width:100%;border-radius:12px;max-height:260px" src="${escapeAttribute(videoUrl)}"></video>` : ''}
+    </div>
+  </article>`;
+}
+
 function bindSheetFields(sheetId) {
-  const bind = (id, key, cast = (v) => v) => {
+  const bind = (id, key, cast = (value) => value) => {
     const input = document.getElementById(id);
     input?.addEventListener('input', () => {
-      const sheet = state.sheets.find((s) => s.id === sheetId);
+      const sheet = state.sheets.find((item) => item.id === sheetId);
       if (!sheet) return;
       sheet[key] = cast(input.value);
       sheet.updatedAt = new Date().toISOString();
@@ -345,28 +711,139 @@ function bindSheetFields(sheetId) {
   bind('fieldName', 'name');
   bind('fieldOccupation', 'occupation');
   bind('fieldHome', 'home');
-  bind('fieldAge', 'age', (v) => Number(v || 0));
+  bind('fieldAge', 'age', (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  });
+  bind('fieldDescription', 'description');
   bind('fieldNotes', 'notes');
+
+  document.getElementById('fieldType')?.addEventListener('change', (event) => {
+    const sheet = state.sheets.find((item) => item.id === sheetId);
+    if (!sheet) return;
+    sheet.type = event.target.value;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    render();
+  });
+
+  document.getElementById('fieldCampaign')?.addEventListener('change', (event) => {
+    const sheet = state.sheets.find((item) => item.id === sheetId);
+    if (!sheet) return;
+    sheet.campaignId = event.target.value || null;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    renderList();
+    updateTags();
+  });
+
+  document.getElementById('fieldPlayerVisible')?.addEventListener('change', (event) => {
+    const sheet = state.sheets.find((item) => item.id === sheetId);
+    if (!sheet) return;
+    sheet.playerVisible = event.target.checked;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    updateTags();
+  });
 
   const imageInput = document.getElementById('fieldImage');
   imageInput?.addEventListener('change', () => {
     const file = imageInput.files?.[0];
     if (!file) return;
 
-    const sheet = state.sheets.find((s) => s.id === sheetId);
+    const validation = validateUpload(file, IMAGE_TYPES, MAX_IMAGE_SIZE, 'imagem');
+    if (validation) {
+      showToast(validation);
+      imageInput.value = '';
+      return;
+    }
+
+    const sheet = state.sheets.find((item) => item.id === sheetId);
     if (!sheet) return;
 
     setSheetPreviewUrl(sheet, URL.createObjectURL(file));
     sheet.pendingImageFile = file;
     sheet.updatedAt = new Date().toISOString();
     state.dirty = true;
-    updateTags();
     render();
   });
 
+  const videoInput = document.getElementById('fieldVideo');
+  videoInput?.addEventListener('change', () => {
+    const file = videoInput.files?.[0];
+    if (!file) return;
+
+    const validation = validateUpload(file, VIDEO_TYPES, MAX_VIDEO_SIZE, 'video');
+    if (validation) {
+      showToast(validation);
+      videoInput.value = '';
+      return;
+    }
+
+    const sheet = state.sheets.find((item) => item.id === sheetId);
+    if (!sheet) return;
+
+    setSheetVideoPreviewUrl(sheet, URL.createObjectURL(file));
+    sheet.pendingVideoFile = file;
+    sheet.updatedAt = new Date().toISOString();
+    state.dirty = true;
+    render();
+  });
+
+  document.getElementById('saveNpcGalleryAssetBtn')?.addEventListener('click', async () => {
+    const uploadInput = document.getElementById('npcGalleryUpload');
+    const labelInput = document.getElementById('npcGalleryLabel');
+    const file = uploadInput?.files?.[0];
+    if (!file) {
+      showToast('Escolha uma imagem para a galeria.');
+      return;
+    }
+
+    const validation = validateUpload(file, IMAGE_TYPES, MAX_IMAGE_SIZE, 'imagem');
+    if (validation) {
+      showToast(validation);
+      return;
+    }
+
+    try {
+      const imageUrl = await uploadNpcGalleryAsset(state.sync.client, state.sync.user.id, file);
+      const asset = await upsertNpcGalleryAsset(state.sync.client, {
+        owner_user_id: state.sync.user.id,
+        image_url: imageUrl,
+        label: labelInput?.value?.trim() || null,
+        tags_json: labelInput?.value?.trim() ? [labelInput.value.trim()] : null
+      });
+      state.npcGallery.unshift({
+        ...asset,
+        signedUrl: await resolveAssetUrl(asset.image_url)
+      });
+      render();
+      showToast('Retrato salvo na galeria');
+    } catch (error) {
+      showToast(error?.message || 'Falha ao salvar retrato na galeria');
+    }
+  });
+
+  for (const button of document.querySelectorAll('[data-pick-gallery-image]')) {
+    button.addEventListener('click', async () => {
+      const asset = state.npcGallery.find((item) => item.id === button.getAttribute('data-pick-gallery-image'));
+      const sheet = state.sheets.find((item) => item.id === sheetId);
+      if (!asset || !sheet) return;
+
+      sheet.imagePath = asset.image_url;
+      sheet.imageSignedUrl = asset.signedUrl || (await resolveAssetUrl(asset.image_url));
+      releasePreviewUrl(sheet);
+      sheet.pendingImageFile = null;
+      sheet.updatedAt = new Date().toISOString();
+      state.dirty = true;
+      render();
+      showToast('Retrato aplicado ao NPC');
+    });
+  }
+
   for (const skillInput of document.querySelectorAll('[data-skill-value]')) {
     skillInput.addEventListener('input', () => {
-      const sheet = state.sheets.find((s) => s.id === sheetId);
+      const sheet = state.sheets.find((item) => item.id === sheetId);
       if (!sheet) return;
       const skillIndex = Number(skillInput.getAttribute('data-skill-value'));
       if (!sheet.skills[skillIndex]) return;
@@ -378,30 +855,670 @@ function bindSheetFields(sheetId) {
   }
 }
 
-function renderSkill(skill, index, editable) {
+function renderCampaign() {
+  const selected = getSelectedCampaign();
+  if (!selected) {
+    el.viewRoot.className = 'view-root focus-view';
+    el.viewRoot.innerHTML = '<article class="sheet-card"><div class="sheet-body"><p>Nenhuma campanha encontrada.</p></div></article>';
+    return;
+  }
+
+  const editable = canEditCampaign(selected);
   const disabled = editable ? '' : 'disabled';
-  return `<details class="skill-group">
-    <summary>${escapeHtml(skill.name)} <span class="base-badge">Base ${skill.base}</span></summary>
-    <div class="skill-group-body">
-      <div class="skill-row">
-        <div class="name"><span class="skill-label">Valor atual</span></div>
-        <input class="mini" type="number" min="0" max="99" value="${skill.value}" data-skill-value="${index}" ${disabled}>
-        <div class="mini">-</div>
-        <div class="mini">Dif: ${Math.floor(skill.value / 2)}</div>
-        <div class="mini">Ext: ${Math.floor(skill.value / 5)}</div>
+  if (selected.coverImageUrl && !selected.coverSignedUrl) {
+    void ensureCampaignCoverUrl(selected);
+  }
+  const signedCover = selected.coverSignedUrl || selected.coverImageUrl;
+  const members = state.campaignMembers[selected.id] || [];
+  const campaignSheets = state.sheets.filter((sheet) => sheet.campaignId === selected.id && (isCurrentUserDm() || sheet.type !== 'npc' || sheet.playerVisible));
+  const content = state.campaignContent[selected.id] || {};
+
+  el.viewRoot.className = 'view-root';
+  el.viewRoot.innerHTML = `<div class="grid-view">
+    <article class="sheet-card">
+      <header class="card-header">
+        <h2>${escapeHtml(selected.title)}</h2>
+        <div class="subtitle">Painel da campanha</div>
+      </header>
+      <div class="sheet-body">
+        ${
+          signedCover
+            ? `<div class="portrait-preview" style="width:100%;max-width:none;aspect-ratio:16/7"><img src="${escapeAttribute(signedCover)}" alt="Capa"></div>`
+            : ''
+        }
+        <div class="grid-2">
+          <div class="field"><label>Titulo</label><input id="campaignTitle" value="${escapeHtml(selected.title)}" ${disabled}></div>
+          <div class="field">
+            <label>Status</label>
+            <select id="campaignStatus" ${disabled}>
+              ${['draft', 'active', 'archived']
+                .map((status) => `<option value="${status}" ${selected.status === status ? 'selected' : ''}>${status}</option>`)
+                .join('')}
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>Resumo Publico</label><textarea id="campaignSummary" ${disabled}>${escapeHtml(selected.publicSummary)}</textarea></div>
+        ${editable ? '<div class="field"><label>Capa</label><input id="campaignCoverFile" type="file" accept="image/*"></div>' : ''}
+        <div class="helper">A campanha organiza fichas, pistas, documentos e pagina da tela do mestre em um unico painel mobile-first.</div>
+      </div>
+    </article>
+
+    <article class="sheet-card">
+      <header class="card-header">
+        <h2>Jogadores</h2>
+        <div class="subtitle">${members.length} membros</div>
+      </header>
+      <div class="sheet-body">
+        ${members.length ? members.map((member) => renderMemberCard(member, editable)).join('') : '<p class="muted">Nenhum membro registrado.</p>'}
+        ${
+          editable
+            ? `<div class="section">
+          <h3>Adicionar jogador</h3>
+          <div class="grid-2">
+            <div class="field"><label>User ID</label><input id="newMemberUserId" placeholder="uuid do usuario"></div>
+            <div class="field">
+              <label>Papel</label>
+              <select id="newMemberRole">
+                <option value="player">player</option>
+                <option value="dm">dm</option>
+              </select>
+            </div>
+          </div>
+          <button id="addMemberBtn" class="btn ok" type="button">Adicionar membro</button>
+        </div>`
+            : ''
+        }
+      </div>
+    </article>
+
+    <article class="sheet-card">
+      <header class="card-header">
+        <h2>Galeria</h2>
+        <div class="subtitle">${campaignSheets.length} personagens vinculados</div>
+      </header>
+      <div class="sheet-body">
+        ${
+          campaignSheets.length
+            ? `<div class="grid-2">${campaignSheets.map((sheet) => renderGalleryCard(sheet)).join('')}</div>`
+            : '<p class="muted">Nenhuma ficha vinculada a esta campanha.</p>'
+        }
+      </div>
+    </article>
+
+    ${CONTENT_DEFINITIONS.map((definition) => renderContentSection(selected.id, definition, content[definition.table] || [], editable)).join('')}
+  </div>`;
+
+  bindCampaignFields(selected.id);
+}
+
+function renderMemberCard(member, editable) {
+  return `<div class="section">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div>
+        <div><strong>${escapeHtml(member.user_id)}</strong></div>
+        <div class="helper">${escapeHtml(member.role)}</div>
+      </div>
+      ${editable ? `<button class="btn danger" data-remove-member="${escapeAttribute(member.id)}" type="button">Remover</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderGalleryCard(sheet) {
+  if (sheet.imagePath && !sheet.imageSignedUrl && !sheet.imagePreviewUrl) {
+    void ensureSheetMediaUrls(sheet);
+  }
+  const image = sheet.imagePreviewUrl || sheet.imageSignedUrl;
+  return `<button class="section" type="button" data-open-sheet="${escapeAttribute(sheet.id)}" style="text-align:left">
+    <div class="row">
+      <div class="portrait-preview" style="width:92px;aspect-ratio:3/4;flex:none">${image ? `<img src="${escapeAttribute(image)}" alt="">` : '<span>Sem retrato</span>'}</div>
+      <div>
+        <h3>${escapeHtml(sheet.name)}</h3>
+        <div class="helper">${sheet.type === 'npc' ? 'NPC' : 'Investigador'}</div>
+        <div class="small">${escapeHtml(sheet.description || sheet.occupation || 'Sem resumo')}</div>
       </div>
     </div>
-  </details>`;
+  </button>`;
+}
+
+function renderContentSection(campaignId, definition, rows, editable) {
+  return `<article class="sheet-card">
+    <header class="card-header">
+      <h2>${escapeHtml(definition.label)}</h2>
+      <div class="subtitle">${rows.length} registros</div>
+    </header>
+    <div class="sheet-body">
+      ${
+        rows.length
+          ? rows
+              .map((row) => {
+                const body = row[definition.bodyKey] || '';
+                const fileValue = row.file_url || row.image_url || '';
+                return `<div class="section">
+                  <div class="row" style="justify-content:space-between;align-items:flex-start">
+                    <div>
+                      <h3>${escapeHtml(row.title)}</h3>
+                      <div class="helper">${escapeHtml(row.visibility || 'dm_only')}</div>
+                    </div>
+                    ${editable ? `<button class="btn danger" type="button" data-delete-content="${definition.table}:${row.id}">Excluir</button>` : ''}
+                  </div>
+                  ${definition.supportsType && row.content_type ? `<div class="helper">${escapeHtml(row.content_type)}</div>` : ''}
+                  ${definition.supportsType && row.type ? `<div class="helper">${escapeHtml(row.type)}</div>` : ''}
+                  ${definition.supportsStatus && row.status ? `<div class="helper">Status: ${escapeHtml(row.status)}</div>` : ''}
+                  ${renderContentAttachment(definition, row, fileValue)}
+                  ${renderContentBody(definition, row, body)}
+                </div>`;
+              })
+              .join('')
+          : '<p class="muted">Nada compartilhado ainda.</p>'
+      }
+      ${
+        editable
+          ? renderContentForm(campaignId, definition)
+          : ''
+      }
+    </div>
+  </article>`;
+}
+
+function renderContentForm(campaignId, definition) {
+  return `<div class="section">
+    <h3>Novo item</h3>
+    <div class="field"><label>Titulo</label><input data-content-title="${definition.table}" placeholder="Titulo"></div>
+    ${
+      definition.supportsType
+        ? `<div class="field">
+      <label>${escapeHtml(definition.typeLabel || 'Tipo')}</label>
+      <select data-content-type="${definition.table}">
+        ${(definition.typeOptions || ['event']).map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join('')}
+      </select>
+    </div>`
+        : ''
+    }
+    ${
+      definition.supportsStatus
+        ? `<div class="field">
+      <label>Status</label>
+      <select data-content-status="${definition.table}">
+        <option value="hidden">hidden</option>
+        <option value="available">available</option>
+        <option value="found">found</option>
+      </select>
+    </div>`
+        : ''
+    }
+    <div class="field">
+      <label>Visibilidade</label>
+      <select data-content-visibility="${definition.table}">
+        <option value="dm_only">dm_only</option>
+        <option value="shared_all">shared_all</option>
+        <option value="shared_player">shared_player</option>
+      </select>
+    </div>
+    <div class="field"><label>Compartilhar com user_id</label><input data-content-shared="${definition.table}" placeholder="Opcional para shared_player"></div>
+    ${
+      definition.supportsFile
+        ? `<div class="field"><label>${escapeHtml(definition.fileLabel || 'URL ou arquivo')}</label><input data-content-file="${definition.table}" placeholder="URL publica opcional"></div>
+        <div class="field"><label>Upload</label><input data-content-upload="${definition.table}" type="file" accept="${escapeAttribute(getContentFileAccept(definition.table))}"></div>`
+        : ''
+    }
+    <div class="field"><label>${escapeHtml(definition.bodyLabel)}</label><textarea data-content-body="${definition.table}" placeholder="Conteudo"></textarea></div>
+    <button class="btn ok" type="button" data-save-content="${definition.table}" data-campaign-id="${escapeAttribute(campaignId)}">Salvar item</button>
+  </div>`;
+}
+
+function bindCampaignFields(campaignId) {
+  const campaign = state.campaigns.find((item) => item.id === campaignId);
+  if (!campaign) return;
+
+  const bind = (id, key) => {
+    document.getElementById(id)?.addEventListener('input', (event) => {
+      campaign[key] = event.target.value;
+      campaign.updatedAt = new Date().toISOString();
+      state.campaignDirty = true;
+      updateTags();
+    });
+  };
+
+  bind('campaignTitle', 'title');
+  bind('campaignSummary', 'publicSummary');
+
+  document.getElementById('campaignStatus')?.addEventListener('change', (event) => {
+    campaign.status = event.target.value;
+    campaign.updatedAt = new Date().toISOString();
+    state.campaignDirty = true;
+    updateTags();
+  });
+
+  document.getElementById('campaignCoverFile')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const validation = validateUpload(file, IMAGE_TYPES, MAX_IMAGE_SIZE, 'imagem');
+    if (validation) {
+      showToast(validation);
+      event.target.value = '';
+      return;
+    }
+
+    campaign.pendingCoverFile = file;
+    campaign.updatedAt = new Date().toISOString();
+    state.campaignDirty = true;
+    updateTags();
+  });
+
+  document.getElementById('addMemberBtn')?.addEventListener('click', async () => {
+    const userId = document.getElementById('newMemberUserId')?.value?.trim();
+    const role = document.getElementById('newMemberRole')?.value || 'player';
+    if (!userId) {
+      showToast('Informe o user ID do membro.');
+      return;
+    }
+
+    try {
+      const member = await upsertCampaignMember(state.sync.client, {
+        campaign_id: campaignId,
+        user_id: userId,
+        role
+      });
+      state.campaignMembers[campaignId] = mergeRow(state.campaignMembers[campaignId] || [], member);
+      render();
+      showToast('Membro atualizado');
+    } catch (error) {
+      showToast(error?.message || 'Falha ao adicionar membro');
+    }
+  });
+
+  for (const button of document.querySelectorAll('[data-remove-member]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await removeCampaignMember(state.sync.client, button.getAttribute('data-remove-member'));
+        state.campaignMembers[campaignId] = (state.campaignMembers[campaignId] || []).filter(
+          (member) => member.id !== button.getAttribute('data-remove-member')
+        );
+        render();
+        showToast('Membro removido');
+      } catch (error) {
+        showToast(error?.message || 'Falha ao remover membro');
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-open-sheet]')) {
+    button.addEventListener('click', () => {
+      state.view = VIEW_SHEETS;
+      state.selectedId = button.getAttribute('data-open-sheet');
+      render();
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-save-content]')) {
+    button.addEventListener('click', async () => {
+      const table = button.getAttribute('data-save-content');
+      const definition = CONTENT_DEFINITIONS.find((item) => item.table === table);
+      if (!definition) return;
+
+      const title = document.querySelector(`[data-content-title="${table}"]`)?.value?.trim() || '';
+      const body = document.querySelector(`[data-content-body="${table}"]`)?.value || '';
+      const visibility = document.querySelector(`[data-content-visibility="${table}"]`)?.value || 'dm_only';
+      const sharedUser = document.querySelector(`[data-content-shared="${table}"]`)?.value?.trim() || null;
+      const fileValue = document.querySelector(`[data-content-file="${table}"]`)?.value?.trim() || null;
+      const uploadFile = document.querySelector(`[data-content-upload="${table}"]`)?.files?.[0] || null;
+      const typeValue = document.querySelector(`[data-content-type="${table}"]`)?.value || null;
+      const statusValue = document.querySelector(`[data-content-status="${table}"]`)?.value || null;
+
+      if (!title) {
+        showToast('Titulo obrigatorio.');
+        return;
+      }
+      if (visibility === 'shared_player' && !sharedUser) {
+        showToast('shared_player exige user_id especifico.');
+        return;
+      }
+
+      const payload = {
+        campaign_id: campaignId,
+        title,
+        visibility,
+        shared_with_user_id: visibility === 'shared_player' ? sharedUser : null,
+        [definition.bodyKey]: body
+      };
+
+      let resolvedFileValue = fileValue;
+      if (uploadFile) {
+        const uploadValidation = validateCampaignContentUpload(table, uploadFile);
+        if (uploadValidation) {
+          showToast(uploadValidation);
+          return;
+        }
+
+        try {
+          resolvedFileValue = await uploadCampaignAsset(state.sync.client, campaignId, uploadFile, table);
+        } catch (error) {
+          showToast(error?.message || 'Falha ao enviar arquivo');
+          return;
+        }
+      }
+
+      if (table === 'timeline_entries') {
+        payload.event_type = typeValue || 'event';
+        payload.event_date = null;
+        payload.date_label = null;
+      }
+      if (table === 'clues') {
+        if (resolvedFileValue && isImagePath(resolvedFileValue)) {
+          payload.image_url = resolvedFileValue;
+          payload.file_url = null;
+        } else {
+          payload.file_url = resolvedFileValue;
+          payload.image_url = null;
+        }
+        payload.status = statusValue || 'hidden';
+      }
+      if (table === 'handouts') {
+        payload.type = typeValue || 'markdown';
+        payload.file_url = resolvedFileValue;
+      }
+      if (table === 'maps') {
+        payload.image_url = resolvedFileValue || '';
+      }
+      if (table === 'dm_screen_pages') {
+        payload.content_type = typeValue || 'markdown';
+        payload.sort_order = 0;
+      }
+
+      try {
+        const row = await upsertCampaignContentRow(state.sync.client, table, payload);
+        if (!state.campaignContent[campaignId]) state.campaignContent[campaignId] = {};
+        state.campaignContent[campaignId][table] = mergeRow(state.campaignContent[campaignId][table] || [], row);
+        if (table === 'maps') {
+          state.mapPins[row.id] = state.mapPins[row.id] || [];
+        }
+        render();
+        showToast('Item salvo');
+      } catch (error) {
+        showToast(error?.message || 'Falha ao salvar item');
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-delete-content]')) {
+    button.addEventListener('click', async () => {
+      const [table, rowId] = button.getAttribute('data-delete-content').split(':');
+      try {
+        await deleteCampaignContentRow(state.sync.client, table, rowId);
+        state.campaignContent[campaignId][table] = (state.campaignContent[campaignId][table] || []).filter((row) => row.id !== rowId);
+        render();
+        showToast('Item removido');
+      } catch (error) {
+        showToast(error?.message || 'Falha ao remover item');
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-save-pin]')) {
+    button.addEventListener('click', async () => {
+      const mapId = button.getAttribute('data-save-pin');
+      const label = document.querySelector(`[data-pin-label="${mapId}"]`)?.value?.trim() || '';
+      const xValue = Number(document.querySelector(`[data-pin-x="${mapId}"]`)?.value || '');
+      const yValue = Number(document.querySelector(`[data-pin-y="${mapId}"]`)?.value || '');
+      const description = document.querySelector(`[data-pin-description="${mapId}"]`)?.value?.trim() || null;
+      const visibility = document.querySelector(`[data-pin-visibility="${mapId}"]`)?.value || 'dm_only';
+      const sharedUser = document.querySelector(`[data-pin-shared="${mapId}"]`)?.value?.trim() || null;
+
+      if (!label || !Number.isFinite(xValue) || !Number.isFinite(yValue)) {
+        showToast('Informe rótulo e coordenadas do pino.');
+        return;
+      }
+      if (visibility === 'shared_player' && !sharedUser) {
+        showToast('shared_player exige user_id especifico.');
+        return;
+      }
+
+      try {
+        const pin = await upsertMapPin(state.sync.client, {
+          map_id: mapId,
+          label,
+          x_position: Math.max(0, Math.min(100, xValue)),
+          y_position: Math.max(0, Math.min(100, yValue)),
+          description,
+          visibility,
+          shared_with_user_id: visibility === 'shared_player' ? sharedUser : null
+        });
+        state.mapPins[mapId] = mergeRow(state.mapPins[mapId] || [], pin);
+        render();
+        showToast('Pino salvo');
+      } catch (error) {
+        showToast(error?.message || 'Falha ao salvar pino');
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll('[data-delete-pin]')) {
+    button.addEventListener('click', async () => {
+      const [mapId, pinId] = button.getAttribute('data-delete-pin').split(':');
+      try {
+        await deleteMapPin(state.sync.client, pinId);
+        state.mapPins[mapId] = (state.mapPins[mapId] || []).filter((pin) => pin.id !== pinId);
+        render();
+        showToast('Pino removido');
+      } catch (error) {
+        showToast(error?.message || 'Falha ao remover pino');
+      }
+    });
+  }
+}
+
+function renderContentAttachment(definition, row, fileValue) {
+  if (definition.table === 'maps') {
+    return '';
+  }
+  const signedUrl = row._signedFileUrl || row._signedImageUrl || null;
+  const resolvedUrl = signedUrl || fileValue;
+  if (fileValue && !signedUrl && !/^https?:\/\//i.test(fileValue)) {
+    void ensureContentAssetUrl(row, fileValue);
+  }
+  if (!resolvedUrl) {
+    return '';
+  }
+  if (isImagePath(fileValue)) {
+    return `<div class="portrait-preview" style="width:100%;max-width:none;aspect-ratio:16/9;margin:10px 0"><img src="${escapeAttribute(resolvedUrl)}" alt=""></div>`;
+  }
+  if (isPdfPath(fileValue)) {
+    return `<div class="helper"><a href="${escapeAttribute(resolvedUrl)}" target="_blank" rel="noreferrer">Abrir PDF</a></div>`;
+  }
+  return `<div class="helper"><a href="${escapeAttribute(resolvedUrl)}" target="_blank" rel="noreferrer">Abrir arquivo</a></div>`;
+}
+
+function renderContentBody(definition, row, body) {
+  if (definition.table === 'markdown_documents' || (definition.table === 'handouts' && row.type === 'markdown')) {
+    return `<div class="section">${renderMarkdown(body)}</div>`;
+  }
+  if (definition.table === 'relationship_diagrams') {
+    return renderMermaidCard(body);
+  }
+  if (definition.table === 'maps') {
+    return renderMapDetail(row);
+  }
+  if (definition.table === 'dm_screen_pages' && row.content_type === 'markdown') {
+    return `<div class="section">${renderMarkdown(body)}</div>`;
+  }
+  return `<div style="white-space:pre-wrap">${escapeHtml(body)}</div>`;
+}
+
+function renderMapDetail(mapRow) {
+  const pins = state.mapPins[mapRow.id] || [];
+  const imageUrl = mapRow._signedImageUrl || mapRow.image_url || '';
+  if (mapRow.image_url && !mapRow._signedImageUrl && !/^https?:\/\//i.test(mapRow.image_url)) {
+    void ensureContentAssetUrl(mapRow, mapRow.image_url);
+  }
+
+  return `<div class="section">
+    ${imageUrl ? renderMapCanvas(imageUrl, pins) : '<div class="helper">Envie uma imagem para visualizar o mapa.</div>'}
+    ${pins.length ? `<div class="grid-2">${pins.map((pin) => renderPinCard(mapRow.id, pin)).join('')}</div>` : '<p class="muted">Nenhum pino neste mapa.</p>'}
+    ${
+      isCurrentUserDm()
+        ? `<div class="divider"></div>
+      <h3>Novo pino</h3>
+      <div class="grid-2">
+        <div class="field"><label>Rótulo</label><input data-pin-label="${mapRow.id}" placeholder="Ex.: Biblioteca"></div>
+        <div class="field"><label>Descrição</label><input data-pin-description="${mapRow.id}" placeholder="Opcional"></div>
+        <div class="field"><label>X (%)</label><input data-pin-x="${mapRow.id}" type="number" min="0" max="100" step="0.1" placeholder="50"></div>
+        <div class="field"><label>Y (%)</label><input data-pin-y="${mapRow.id}" type="number" min="0" max="100" step="0.1" placeholder="50"></div>
+        <div class="field">
+          <label>Visibilidade</label>
+          <select data-pin-visibility="${mapRow.id}">
+            <option value="dm_only">dm_only</option>
+            <option value="shared_all">shared_all</option>
+            <option value="shared_player">shared_player</option>
+          </select>
+        </div>
+        <div class="field"><label>shared_with_user_id</label><input data-pin-shared="${mapRow.id}" placeholder="Obrigatório para shared_player"></div>
+      </div>
+      <button class="btn ok" type="button" data-save-pin="${escapeAttribute(mapRow.id)}">Salvar pino</button>`
+        : ''
+    }
+  </div>`;
+}
+
+function renderMapCanvas(imageUrl, pins) {
+  return `<div style="position:relative;border-radius:14px;overflow:hidden;border:1px solid rgba(195,167,108,.14);margin-bottom:12px">
+    <img src="${escapeAttribute(imageUrl)}" alt="Mapa" style="display:block;width:100%;height:auto">
+    ${pins
+      .map(
+        (pin) => `<div title="${escapeAttribute(pin.label)}" style="position:absolute;left:${Number(pin.x_position)}%;top:${Number(pin.y_position)}%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:999px;background:#c3a76c;border:2px solid #1f1b16;box-shadow:0 2px 8px rgba(0,0,0,.4)"></div>`
+      )
+      .join('')}
+  </div>`;
+}
+
+function renderPinCard(mapId, pin) {
+  return `<div class="stat">
+    <div class="stat-head">
+      <strong>${escapeHtml(pin.label)}</strong>
+      ${isCurrentUserDm() ? `<button class="btn danger" type="button" data-delete-pin="${escapeAttribute(mapId)}:${escapeAttribute(pin.id)}">Excluir</button>` : ''}
+    </div>
+    <div class="helper">${escapeHtml(pin.visibility)}</div>
+    <div class="helper">X ${Number(pin.x_position).toFixed(1)}% · Y ${Number(pin.y_position).toFixed(1)}%</div>
+    ${pin.description ? `<div class="small">${escapeHtml(pin.description)}</div>` : ''}
+  </div>`;
+}
+
+function renderMarkdown(source) {
+  const text = escapeHtml(String(source || '').replace(/\r\n/g, '\n').trim());
+  if (!text) {
+    return '<p class="muted">Documento vazio.</p>';
+  }
+
+  const html = text
+    .replace(/```([\s\S]*?)```/g, (_, block) => `<pre><code>${escapeHtml(block.trim())}</code></pre>`)
+    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^- (.*)$/gm, '<li>$1</li>');
+
+  const paragraphs = html
+    .split(/\n{2,}/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      if (/^<h\d|^<pre|^<li>/.test(chunk)) {
+        return chunk.startsWith('<li>') ? `<ul>${chunk}</ul>` : chunk;
+      }
+      return `<p>${chunk.replace(/\n/g, '<br>')}</p>`;
+    })
+    .join('');
+
+  return paragraphs;
+}
+
+function renderMermaidCard(source) {
+  const lines = String(source || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const relationships = lines
+    .map((line) => {
+      const match = line.match(/^([A-Za-z0-9_ ]+)\s*(-->|---|==>)\s*([A-Za-z0-9_ ]+)/);
+      return match ? { from: match[1].trim(), to: match[3].trim(), arrow: match[2] } : null;
+    })
+    .filter(Boolean);
+
+  if (!relationships.length) {
+    return `<div style="white-space:pre-wrap">${escapeHtml(source || 'Sem diagrama')}</div>`;
+  }
+
+  return `<div class="section">
+    <div class="helper">Visualizacao simplificada do diagrama Mermaid.</div>
+    ${relationships
+      .map(
+        (item) => `<div class="row" style="justify-content:space-between;border-bottom:1px solid rgba(195,167,108,.08);padding:8px 0">
+        <strong>${escapeHtml(item.from)}</strong>
+        <span class="helper">${escapeHtml(item.arrow)}</span>
+        <strong>${escapeHtml(item.to)}</strong>
+      </div>`
+      )
+      .join('')}
+    <details class="section" style="margin-top:10px">
+      <summary>Fonte Mermaid</summary>
+      <div style="white-space:pre-wrap;margin-top:10px">${escapeHtml(source)}</div>
+    </details>
+  </div>`;
+}
+
+function getContentFileAccept(table) {
+  if (table === 'maps') return 'image/*';
+  if (table === 'clues') return 'image/*,.pdf,application/pdf';
+  if (table === 'handouts') return 'image/*,.pdf,application/pdf,text/plain,.md,text/markdown';
+  return '*/*';
+}
+
+function validateCampaignContentUpload(table, file) {
+  if (table === 'maps') {
+    return validateUpload(file, IMAGE_TYPES, MAX_IMAGE_SIZE, 'imagem');
+  }
+  return validateUpload(file, DOCUMENT_TYPES, MAX_DOCUMENT_SIZE, 'arquivo');
+}
+
+async function ensureContentAssetUrl(row, assetPath) {
+  try {
+    const signedUrl = await resolveAssetUrl(assetPath);
+    if (!signedUrl) return;
+    if (row.image_url === assetPath) {
+      row._signedImageUrl = signedUrl;
+    }
+    if (row.file_url === assetPath) {
+      row._signedFileUrl = signedUrl;
+    }
+    render();
+  } catch {}
+}
+
+async function resolveAssetUrl(assetPath) {
+  if (!assetPath) return null;
+  if (/^https?:\/\//i.test(assetPath)) return assetPath;
+  return createSignedAssetUrl(state.sync.client, campaignAssetBucket(), assetPath, 3600);
+}
+
+function isImagePath(value) {
+  return /\.(png|jpe?g|webp|gif)$/i.test(String(value || '')) || /^data:image\//i.test(String(value || ''));
+}
+
+function isPdfPath(value) {
+  return /\.pdf$/i.test(String(value || ''));
+}
+
+function formatGalleryTags(tagsJson) {
+  if (Array.isArray(tagsJson)) {
+    return tagsJson.map((value) => String(value)).join(', ') || 'Sem tags';
+  }
+  return 'Sem tags';
 }
 
 async function saveSelectedSheet(successMessage = 'Ficha salva') {
   const selected = getSelectedSheet();
   if (!selected || !canEditSheet(selected)) return;
-
-  if (!state.sync.connected) {
-    showToast('Sessao nao conectada.');
-    return;
-  }
 
   try {
     const payload = serializeSheet(selected, state.sync.user.id);
@@ -418,16 +1535,34 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
       selected.pendingImageFile = null;
     }
 
+    if (selected.pendingVideoFile) {
+      const videoPath = await uploadSheetMedia(
+        state.sync.client,
+        refreshed.ownerId || state.sync.user.id,
+        refreshed.id,
+        selected.pendingVideoFile
+      );
+      refreshed.introVideoUrl = videoPath;
+      refreshed = deserializeSheet(
+        await upsertCharacterSheet(state.sync.client, {
+          ...serializeSheet(refreshed, state.sync.user.id),
+          intro_video_url: videoPath
+        })
+      );
+      selected.pendingVideoFile = null;
+    }
+
     const index = state.sheets.findIndex((item) => item.id === refreshed.id);
     if (index >= 0) {
       releasePreviewUrl(state.sheets[index]);
+      releaseVideoPreviewUrl(state.sheets[index]);
       state.sheets[index] = refreshed;
     } else {
       state.sheets.unshift(refreshed);
       state.selectedId = refreshed.id;
     }
 
-    await ensureSheetImageUrl(refreshed);
+    await ensureSheetMediaUrls(refreshed);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.sheets));
     state.dirty = false;
     showToast(successMessage);
@@ -437,45 +1572,87 @@ async function saveSelectedSheet(successMessage = 'Ficha salva') {
   }
 }
 
-async function deleteRemoteSheet(sheetId) {
-  await deleteCharacterSheet(state.sync.client, sheetId);
+async function saveSelectedCampaign() {
+  const selected = getSelectedCampaign();
+  if (!selected || !canEditCampaign(selected)) return;
+
+  try {
+    let coverImageUrl = selected.coverImageUrl || null;
+
+    if (selected.pendingCoverFile) {
+      coverImageUrl = await uploadCampaignAsset(state.sync.client, selected.id, selected.pendingCoverFile, 'cover');
+      selected.pendingCoverFile = null;
+    }
+
+    const payload = {
+      id: selected.id,
+      owner_user_id: selected.ownerUserId || state.sync.user.id,
+      title: selected.title,
+      public_summary: selected.publicSummary,
+      cover_image_url: coverImageUrl,
+      status: selected.status
+    };
+
+    const refreshed = deserializeCampaign(await upsertCampaign(state.sync.client, payload));
+    const index = state.campaigns.findIndex((item) => item.id === refreshed.id);
+    if (index >= 0) {
+      state.campaigns[index] = refreshed;
+    } else {
+      state.campaigns.unshift(refreshed);
+    }
+
+    state.selectedCampaignId = refreshed.id;
+    state.campaignDirty = false;
+    await ensureCampaignCoverUrl(refreshed);
+    showToast('Campanha salva');
+    render();
+  } catch (error) {
+    showToast(error?.message || 'Falha ao salvar campanha');
+  }
 }
 
 function applyRoleVisibility() {
-  const isDm = isCurrentUserDm();
-
   if (el.searchContainer) {
-    el.searchContainer.classList.toggle('hidden', !isDm);
-  }
-  if (el.topActions) {
-    el.topActions.classList.toggle('hidden', !isDm);
+    el.searchContainer.classList.toggle('hidden', false);
   }
 
-  if (el.importBtn) el.importBtn.classList.toggle('hidden', !isDm);
-  if (el.exportAllBtn) el.exportAllBtn.classList.toggle('hidden', !isDm);
-  if (el.quickRollBtn) el.quickRollBtn.classList.add('hidden');
-  if (el.viewMode) el.viewMode.closest('.switch')?.classList.add('hidden');
-  if (el.expandAllBtn) el.expandAllBtn.closest('.row')?.classList.add('hidden');
+  if (!isCurrentUserDm()) {
+    el.importBtn?.classList.add('hidden');
+    el.exportAllBtn?.classList.add('hidden');
+  }
 }
 
 function updateActionVisibility() {
   const selected = getSelectedSheet();
-  const editable = canEditSheet(selected);
+  const selectedCampaign = getSelectedCampaign();
+  const editingSheet = state.view === VIEW_SHEETS;
 
-  if (el.newSheetBtn) el.newSheetBtn.disabled = !canCreateSheet();
-  if (el.saveSheetBtn) el.saveSheetBtn.disabled = !editable || !state.dirty;
+  if (el.saveSheetBtn) {
+    el.saveSheetBtn.disabled = editingSheet ? !canEditSheet(selected) || !state.dirty : !canEditCampaign(selectedCampaign) || !state.campaignDirty;
+  }
   if (el.toggleActiveBtn) {
-    el.toggleActiveBtn.disabled = !(isCurrentUserDm() && selected);
+    el.toggleActiveBtn.classList.toggle('hidden', !editingSheet || !isCurrentUserDm());
+    el.toggleActiveBtn.disabled = !(editingSheet && isCurrentUserDm() && selected);
     if (selected) {
       el.toggleActiveBtn.textContent = selected.isActive ? 'Inativar' : 'Ativar';
     }
   }
-  if (el.deleteBtn) el.deleteBtn.disabled = !editable;
-  if (el.duplicateBtn) el.duplicateBtn.disabled = !isCurrentUserDm();
+  if (el.duplicateBtn) {
+    el.duplicateBtn.classList.toggle('hidden', !editingSheet);
+    el.duplicateBtn.disabled = !isCurrentUserDm();
+  }
+  if (el.deleteBtn) {
+    el.deleteBtn.classList.toggle('hidden', !editingSheet);
+    el.deleteBtn.disabled = !editingSheet || !canEditSheet(selected);
+  }
 }
 
 function getSelectedSheet() {
   return state.sheets.find((sheet) => sheet.id === state.selectedId) || null;
+}
+
+function getSelectedCampaign() {
+  return state.campaigns.find((campaign) => campaign.id === state.selectedCampaignId) || null;
 }
 
 function isCurrentUserDm() {
@@ -492,9 +1669,15 @@ function canEditSheet(sheet) {
   return isOwnedByCurrentUser(sheet);
 }
 
+function canEditCampaign(campaign) {
+  return Boolean(campaign && isCurrentUserDm() && campaign.ownerUserId === state.sync.user.id);
+}
+
 function playerHasActiveCharacter() {
   if (!state.sync.user) return false;
-  return state.sheets.some((sheet) => sheet.ownerId === state.sync.user.id && sheet.isActive);
+  return state.sheets.some(
+    (sheet) => sheet.ownerId === state.sync.user.id && sheet.isActive && sheet.type === 'player_character'
+  );
 }
 
 function canCreateSheet() {
@@ -504,22 +1687,23 @@ function canCreateSheet() {
 }
 
 function updateTags() {
-  const selected = getSelectedSheet();
+  const selected = state.view === VIEW_SHEETS ? getSelectedSheet() : getSelectedCampaign();
   if (el.selectedTag) {
-    el.selectedTag.textContent = selected ? selected.name : 'Nenhuma ficha';
+    el.selectedTag.textContent = selected ? selected.name || selected.title : 'Nada selecionado';
   }
 
   if (el.autosaveTag) {
+    const dirty = state.view === VIEW_SHEETS ? state.dirty : state.campaignDirty;
     if (!state.sync.connected) {
       el.autosaveTag.textContent = 'Sem sessao';
-    } else if (state.dirty) {
+    } else if (dirty) {
       el.autosaveTag.textContent = 'Alteracoes pendentes';
     } else {
       el.autosaveTag.textContent = 'Tudo salvo';
     }
   }
 
-  setStatus(isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player');
+  setStatus(`${isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player'} · ${state.view === VIEW_SHEETS ? 'Fichas' : 'Campanhas'}`);
 }
 
 function setStatus(message) {
@@ -530,15 +1714,23 @@ function serializeSheet(sheet, userId) {
   return {
     id: sheet.id,
     owner_id: sheet.ownerId || userId,
+    owner_user_id: sheet.ownerUserId || (sheet.type === 'player_character' ? sheet.ownerId || userId : null),
     name: sheet.name,
+    type: sheet.type,
+    campaign_id: sheet.campaignId || null,
     is_active: sheet.isActive !== false,
     image_url: sheet.imagePath || null,
+    age: sheet.age || null,
+    occupation: sheet.occupation || null,
+    description: sheet.description || null,
+    intro_video_url: sheet.introVideoUrl || null,
+    notes: sheet.notes || null,
     sheet_data: {
-      occupation: sheet.occupation,
       home: sheet.home,
-      age: sheet.age,
       notes: sheet.notes,
-      skills: sheet.skills
+      description: sheet.description,
+      skills: sheet.skills,
+      player_visible: Boolean(sheet.playerVisible)
     }
   };
 }
@@ -548,43 +1740,44 @@ function deserializeSheet(row) {
   return {
     id: typeof row.id === 'string' ? row.id : crypto.randomUUID(),
     ownerId: typeof row.owner_id === 'string' ? row.owner_id : null,
+    ownerUserId: typeof row.owner_user_id === 'string' ? row.owner_user_id : null,
     name: String(row.name || 'Novo Investigador'),
+    type: row.type === 'npc' ? 'npc' : 'player_character',
+    campaignId: typeof row.campaign_id === 'string' ? row.campaign_id : null,
     isActive: row.is_active !== false,
     imagePath: typeof row.image_url === 'string' ? row.image_url : null,
     imageSignedUrl: null,
     imagePreviewUrl: null,
     pendingImageFile: null,
-    occupation: String(data.occupation || 'Sem ocupacao'),
+    introVideoUrl: typeof row.intro_video_url === 'string' ? row.intro_video_url : null,
+    videoSignedUrl: null,
+    videoPreviewUrl: null,
+    pendingVideoFile: null,
+    occupation: String(row.occupation || data.occupation || ''),
     home: String(data.home || 'Arkham'),
-    age: Number(data.age || 30),
-    notes: String(data.notes || ''),
+    age: Number(row.age ?? data.age ?? 30),
+    description: String(row.description || data.description || ''),
+    notes: String(row.notes || data.notes || ''),
+    playerVisible: Boolean(data.player_visible),
     skills: normalizeSkills(Array.isArray(data.skills) ? data.skills : null),
     createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
     updatedAt: typeof row.updated_at === 'string' ? row.updated_at : new Date().toISOString()
   };
 }
 
-function normalizeImportedSheets(data, fallbackOwnerId) {
-  const list = Array.isArray(data) ? data : [data];
-  return list
-    .filter((item) => item && typeof item === 'object')
-    .map((item) => ({
-      id: typeof item.id === 'string' ? item.id : crypto.randomUUID(),
-      ownerId: typeof item.ownerId === 'string' ? item.ownerId : fallbackOwnerId,
-      name: String(item.name || 'Novo Investigador'),
-      isActive: item.isActive !== false,
-      imagePath: typeof item.imagePath === 'string' ? item.imagePath : null,
-      imageSignedUrl: null,
-      imagePreviewUrl: null,
-      pendingImageFile: null,
-      occupation: String(item.occupation || 'Sem ocupacao'),
-      home: String(item.home || 'Arkham'),
-      age: Number(item.age || 30),
-      notes: String(item.notes || ''),
-      skills: normalizeSkills(Array.isArray(item.skills) ? item.skills : null),
-      createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
-      updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString()
-    }));
+function deserializeCampaign(row) {
+  return {
+    id: typeof row.id === 'string' ? row.id : crypto.randomUUID(),
+    ownerUserId: typeof row.owner_user_id === 'string' ? row.owner_user_id : state.sync.user.id,
+    title: String(row.title || 'Nova campanha'),
+    publicSummary: String(row.public_summary || ''),
+    coverImageUrl: typeof row.cover_image_url === 'string' ? row.cover_image_url : null,
+    coverSignedUrl: null,
+    pendingCoverFile: null,
+    status: String(row.status || 'draft'),
+    createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
+    updatedAt: typeof row.updated_at === 'string' ? row.updated_at : new Date().toISOString()
+  };
 }
 
 function createBlankSheet(ownerId) {
@@ -592,20 +1785,111 @@ function createBlankSheet(ownerId) {
   return {
     id: crypto.randomUUID(),
     ownerId,
+    ownerUserId: ownerId,
     name: 'Novo Investigador',
+    type: 'player_character',
+    campaignId: null,
     isActive: true,
     imagePath: null,
     imageSignedUrl: null,
     imagePreviewUrl: null,
     pendingImageFile: null,
+    introVideoUrl: null,
+    videoSignedUrl: null,
+    videoPreviewUrl: null,
+    pendingVideoFile: null,
     occupation: 'Antiquario',
     home: 'Arkham',
     age: 32,
+    description: '',
     notes: '',
+    playerVisible: false,
     skills: defaultCoc7eSkills(),
     createdAt: now,
     updatedAt: now
   };
+}
+
+function createQuickNpcDraft() {
+  const draft = createBlankSheet(state.sync.user?.id ?? null);
+  draft.type = 'npc';
+  draft.ownerUserId = null;
+  draft.name = 'Novo NPC';
+  draft.occupation = 'Contato';
+  draft.description = 'Descricao curta para a primeira aparicao.';
+  draft.notes = 'Motivacao, voz e relacao com o grupo.';
+  draft.isActive = true;
+  draft.playerVisible = false;
+  return draft;
+}
+
+function createGeneratedNpc() {
+  const names = ['Abigail Marsh', 'Thomas Pickman', 'Ruth Carter', 'Miles Harper', 'Eleanor Webb'];
+  const occupations = ['jornalista', 'medico', 'professor', 'detetive', 'bibliotecaria'];
+  const hooks = [
+    'Carrega um segredo antigo sobre a ultima sessao.',
+    'Conhece um endereco que nao aparece em nenhum mapa.',
+    'Parece amistoso, mas esconde uma agenda propria.',
+    'Fala pouco e observa demais.',
+    'Tem uma ligacao direta com uma pista encontrada em Arkham.'
+  ];
+
+  const npc = createQuickNpcDraft();
+  npc.name = names[Math.floor(Math.random() * names.length)];
+  npc.occupation = occupations[Math.floor(Math.random() * occupations.length)];
+  npc.description = hooks[Math.floor(Math.random() * hooks.length)];
+  npc.age = 24 + Math.floor(Math.random() * 30);
+  npc.skills = defaultCoc7eSkills().map((skill) => ({
+    ...skill,
+    value: clampPercent(skill.base + Math.floor(Math.random() * 20))
+  }));
+  return npc;
+}
+
+function createBlankCampaign() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    ownerUserId: state.sync.user.id,
+    title: 'Nova campanha',
+    publicSummary: '',
+    coverImageUrl: null,
+    coverSignedUrl: null,
+    pendingCoverFile: null,
+    status: 'draft',
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function getCampaignTitle(campaignId) {
+  return state.campaigns.find((campaign) => campaign.id === campaignId)?.title || '';
+}
+
+function mergeRow(rows, nextRow) {
+  const index = rows.findIndex((row) => row.id === nextRow.id);
+  if (index >= 0) {
+    const clone = rows.slice();
+    clone[index] = nextRow;
+    return clone;
+  }
+  return [nextRow, ...rows];
+}
+
+function renderSkill(skill, index, editable) {
+  const disabled = editable ? '' : 'disabled';
+  return `<details class="skill-group">
+    <summary>${escapeHtml(skill.name)} <span class="base-badge">Base ${skill.base}</span></summary>
+    <div class="skill-group-body">
+      <div class="skill-row">
+        <div class="name"><span class="skill-label">Valor atual</span></div>
+        <input class="mini" type="number" min="0" max="99" value="${skill.value}" data-skill-value="${index}" ${disabled}>
+        <div class="mini">-</div>
+        <div class="mini">Dif: ${Math.floor(skill.value / 2)}</div>
+        <div class="mini">Ext: ${Math.floor(skill.value / 5)}</div>
+      </div>
+    </div>
+  </details>`;
 }
 
 function normalizeSkills(skills) {
@@ -696,6 +1980,16 @@ function clampPercent(value) {
   return Math.floor(value);
 }
 
+function validateUpload(file, allowedTypes, maxSize, label) {
+  if (!allowedTypes.includes(file.type)) {
+    return `Tipo de ${label} nao suportado.`;
+  }
+  if (file.size > maxSize) {
+    return `${label} excede o limite de ${Math.floor(maxSize / (1024 * 1024))} MB.`;
+  }
+  return null;
+}
+
 function showToast(message) {
   if (!el.toast) return;
   el.toast.textContent = message;
@@ -709,7 +2003,7 @@ function renderSheetImage(sheet) {
   const imageUrl = sheet.imagePreviewUrl || sheet.imageSignedUrl;
 
   if (sheet.imagePath && !imageUrl) {
-    void ensureSheetImageUrl(sheet);
+    void ensureSheetMediaUrls(sheet);
   }
 
   if (!imageUrl) {
@@ -719,21 +2013,42 @@ function renderSheetImage(sheet) {
   return `<img src="${escapeAttribute(imageUrl)}" alt="Retrato de ${escapeAttribute(sheet.name)}">`;
 }
 
-async function ensureSheetImageUrl(sheet) {
-  if (!sheet?.imagePath || sheet.imagePreviewUrl || sheet.imageSignedUrl || !state.sync.client) return;
+async function ensureSheetMediaUrls(sheet) {
+  if (sheet?.imagePath && !sheet.imagePreviewUrl && !sheet.imageSignedUrl && state.sync.client) {
+    try {
+      sheet.imageSignedUrl = await createSignedSheetImageUrl(state.sync.client, sheet.imagePath, 3600);
+    } catch {}
+  }
 
-  try {
-    sheet.imageSignedUrl = await createSignedSheetImageUrl(state.sync.client, sheet.imagePath, 3600);
-  } catch {
-    return;
+  if (sheet?.introVideoUrl && !sheet.videoPreviewUrl && !sheet.videoSignedUrl && state.sync.client && !/^https?:\/\//i.test(sheet.introVideoUrl)) {
+    try {
+      sheet.videoSignedUrl = await createSignedAssetUrl(state.sync.client, sheetMediaBucket(), sheet.introVideoUrl, 3600);
+    } catch {}
   }
 
   if (sheet.id === state.selectedId) render();
 }
 
+async function ensureCampaignCoverUrl(campaign) {
+  if (!campaign?.coverImageUrl || campaign.coverSignedUrl || /^https?:\/\//i.test(campaign.coverImageUrl)) return;
+  try {
+    campaign.coverSignedUrl = await createSignedAssetUrl(
+      state.sync.client,
+      campaignAssetBucket(),
+      campaign.coverImageUrl,
+      3600
+    );
+  } catch {}
+}
+
 function setSheetPreviewUrl(sheet, nextUrl) {
   releasePreviewUrl(sheet);
   sheet.imagePreviewUrl = nextUrl;
+}
+
+function setSheetVideoPreviewUrl(sheet, nextUrl) {
+  releaseVideoPreviewUrl(sheet);
+  sheet.videoPreviewUrl = nextUrl;
 }
 
 function releasePreviewUrl(sheet) {
@@ -745,13 +2060,22 @@ function releasePreviewUrl(sheet) {
   }
 }
 
+function releaseVideoPreviewUrl(sheet) {
+  if (sheet?.videoPreviewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(sheet.videoPreviewUrl);
+  }
+  if (sheet) {
+    sheet.videoPreviewUrl = null;
+  }
+}
+
 function downloadJson(fileName, payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.click();
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
   URL.revokeObjectURL(url);
 }
 
