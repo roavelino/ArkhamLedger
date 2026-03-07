@@ -36,6 +36,7 @@ const VIEW_SHEETS = 'sheets';
 const VIEW_CAMPAIGNS = 'campaigns';
 const CAMPAIGN_MODE_DASHBOARD = 'dashboard';
 const CAMPAIGN_MODE_DM_SCREEN = 'dm_screen';
+const CAMPAIGN_MODE_MAPS = 'maps';
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const DOCUMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'text/markdown'];
 const VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
@@ -135,6 +136,7 @@ const state = {
   selectedId: null,
   selectedCampaignId: null,
   selectedDmScreenPageId: null,
+  selectedMapId: null,
   campaignMode: CAMPAIGN_MODE_DASHBOARD,
   search: '',
   dirty: false,
@@ -462,6 +464,7 @@ async function ensureSelectedCampaignLoaded() {
   }
 
   ensureSelectedDmScreenPage();
+  ensureSelectedMap();
 }
 
 async function ensureNpcGalleryLoaded() {
@@ -570,6 +573,7 @@ function renderCampaignList() {
       state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
       await ensureSelectedCampaignLoaded();
       ensureSelectedDmScreenPage();
+      ensureSelectedMap();
       render();
     });
     el.sheetList.appendChild(item);
@@ -581,6 +585,10 @@ function renderMain() {
   if (state.view === VIEW_CAMPAIGNS) {
     if (state.campaignMode === CAMPAIGN_MODE_DM_SCREEN) {
       renderDmScreen();
+      return;
+    }
+    if (state.campaignMode === CAMPAIGN_MODE_MAPS) {
+      renderCampaignMaps();
       return;
     }
     renderCampaign();
@@ -945,11 +953,10 @@ function renderCampaign() {
         <div class="field"><label>Resumo Publico</label><textarea id="campaignSummary" ${disabled}>${escapeHtml(selected.publicSummary)}</textarea></div>
         ${editable ? '<div class="field"><label>Capa</label><input id="campaignCoverFile" type="file" accept="image/*"></div>' : ''}
         <div class="helper">A campanha organiza fichas, pistas, documentos e pagina da tela do mestre em um unico painel mobile-first.</div>
-        ${
-          isCurrentUserDm()
-            ? '<div class="row"><button id="openDmScreenBtn" class="btn secondary" type="button">Abrir Tela do Mestre</button></div>'
-            : ''
-        }
+        <div class="row">
+          <button id="openMapsViewBtn" class="btn secondary" type="button">Abrir Mapas</button>
+          ${isCurrentUserDm() ? '<button id="openDmScreenBtn" class="btn secondary" type="button">Abrir Tela do Mestre</button>' : ''}
+        </div>
       </div>
     </article>
 
@@ -1061,6 +1068,67 @@ function renderDmScreen() {
   for (const button of document.querySelectorAll('[data-open-dm-page]')) {
     button.addEventListener('click', () => {
       state.selectedDmScreenPageId = button.getAttribute('data-open-dm-page');
+      render();
+    });
+  }
+}
+
+function renderCampaignMaps() {
+  const campaign = getSelectedCampaign();
+  if (!campaign) {
+    state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
+    renderCampaign();
+    return;
+  }
+
+  const maps = getCampaignMaps(campaign.id);
+  const selectedMap = maps.find((row) => row.id === state.selectedMapId) || maps[0] || null;
+  if (selectedMap && state.selectedMapId !== selectedMap.id) {
+    state.selectedMapId = selectedMap.id;
+  }
+
+  el.viewRoot.className = 'view-root focus-view';
+  el.viewRoot.innerHTML = `<article class="sheet-card" style="width:min(1380px,100%)">
+    <header class="card-header">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h2>${escapeHtml(campaign.title)}</h2>
+          <div class="subtitle">Mapas da Campanha</div>
+        </div>
+        <button id="backToCampaignMapsBtn" class="btn secondary" type="button">Voltar ao painel</button>
+      </div>
+    </header>
+    <div class="sheet-body">
+      ${
+        maps.length
+          ? `<div class="row">${maps
+              .map(
+                (row) =>
+                  `<button class="btn ${row.id === selectedMap?.id ? 'ok' : 'secondary'}" type="button" data-open-map-view="${escapeAttribute(row.id)}">${escapeHtml(row.title)}</button>`
+              )
+              .join('')}</div>`
+          : '<p class="muted">Nenhum mapa compartilhado nesta campanha.</p>'
+      }
+      ${
+        selectedMap
+          ? `<section class="section">
+          <h3>${escapeHtml(selectedMap.title)}</h3>
+          <div class="helper">${escapeHtml(selectedMap.description || 'Sem descricao')}</div>
+          ${renderMapDetail(selectedMap, true)}
+        </section>`
+          : ''
+      }
+    </div>
+  </article>`;
+
+  document.getElementById('backToCampaignMapsBtn')?.addEventListener('click', () => {
+    state.campaignMode = CAMPAIGN_MODE_DASHBOARD;
+    render();
+  });
+
+  for (const button of document.querySelectorAll('[data-open-map-view]')) {
+    button.addEventListener('click', () => {
+      state.selectedMapId = button.getAttribute('data-open-map-view');
       render();
     });
   }
@@ -1260,6 +1328,12 @@ function bindCampaignFields(campaignId) {
   document.getElementById('openDmScreenBtn')?.addEventListener('click', () => {
     state.campaignMode = CAMPAIGN_MODE_DM_SCREEN;
     ensureSelectedDmScreenPage();
+    render();
+  });
+
+  document.getElementById('openMapsViewBtn')?.addEventListener('click', () => {
+    state.campaignMode = CAMPAIGN_MODE_MAPS;
+    ensureSelectedMap();
     render();
   });
 
@@ -1520,7 +1594,7 @@ function renderContentBody(definition, row, body) {
   return `<div style="white-space:pre-wrap">${escapeHtml(body)}</div>`;
 }
 
-function renderMapDetail(mapRow) {
+function renderMapDetail(mapRow, expanded = false) {
   const pins = state.mapPins[mapRow.id] || [];
   const imageUrl = mapRow._signedImageUrl || mapRow.image_url || '';
   if (mapRow.image_url && !mapRow._signedImageUrl && !/^https?:\/\//i.test(mapRow.image_url)) {
@@ -1528,10 +1602,10 @@ function renderMapDetail(mapRow) {
   }
 
   return `<div class="section">
-    ${imageUrl ? renderMapCanvas(imageUrl, pins) : '<div class="helper">Envie uma imagem para visualizar o mapa.</div>'}
+    ${imageUrl ? renderMapCanvas(imageUrl, pins, expanded) : '<div class="helper">Envie uma imagem para visualizar o mapa.</div>'}
     ${pins.length ? `<div class="grid-2">${pins.map((pin) => renderPinCard(mapRow.id, pin)).join('')}</div>` : '<p class="muted">Nenhum pino neste mapa.</p>'}
     ${
-      isCurrentUserDm()
+      isCurrentUserDm() && !expanded
         ? `<div class="divider"></div>
       <h3>Novo pino</h3>
       <div class="grid-2">
@@ -1555,12 +1629,12 @@ function renderMapDetail(mapRow) {
   </div>`;
 }
 
-function renderMapCanvas(imageUrl, pins) {
+function renderMapCanvas(imageUrl, pins, expanded = false) {
   return `<div style="position:relative;border-radius:14px;overflow:hidden;border:1px solid rgba(195,167,108,.14);margin-bottom:12px">
-    <img src="${escapeAttribute(imageUrl)}" alt="Mapa" style="display:block;width:100%;height:auto">
+    <img src="${escapeAttribute(imageUrl)}" alt="Mapa" style="display:block;width:100%;height:auto;max-height:${expanded ? '78vh' : 'none'};object-fit:${expanded ? 'contain' : 'cover'};background:#0f0d0a">
     ${pins
       .map(
-        (pin) => `<div title="${escapeAttribute(pin.label)}" style="position:absolute;left:${Number(pin.x_position)}%;top:${Number(pin.y_position)}%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:999px;background:#c3a76c;border:2px solid #1f1b16;box-shadow:0 2px 8px rgba(0,0,0,.4)"></div>`
+        (pin) => `<div title="${escapeAttribute(pin.label)}" style="position:absolute;left:${Number(pin.x_position)}%;top:${Number(pin.y_position)}%;transform:translate(-50%,-50%);min-width:18px;height:18px;border-radius:999px;background:#c3a76c;border:2px solid #1f1b16;box-shadow:0 2px 8px rgba(0,0,0,.4);padding:0 6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#1f1b16;font-weight:700">${expanded ? escapeHtml(pin.label.slice(0, 1).toUpperCase()) : ''}</div>`
       )
       .join('')}
   </div>`;
@@ -1609,37 +1683,124 @@ function renderMarkdown(source) {
 }
 
 function renderMermaidCard(source) {
-  const lines = String(source || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const relationships = lines
-    .map((line) => {
-      const match = line.match(/^([A-Za-z0-9_ ]+)\s*(-->|---|==>)\s*([A-Za-z0-9_ ]+)/);
-      return match ? { from: match[1].trim(), to: match[3].trim(), arrow: match[2] } : null;
-    })
-    .filter(Boolean);
-
-  if (!relationships.length) {
+  const graph = parseMermaidGraph(source);
+  if (!graph) {
     return `<div style="white-space:pre-wrap">${escapeHtml(source || 'Sem diagrama')}</div>`;
   }
 
   return `<div class="section">
-    <div class="helper">Visualizacao simplificada do diagrama Mermaid.</div>
-    ${relationships
-      .map(
-        (item) => `<div class="row" style="justify-content:space-between;border-bottom:1px solid rgba(195,167,108,.08);padding:8px 0">
-        <strong>${escapeHtml(item.from)}</strong>
-        <span class="helper">${escapeHtml(item.arrow)}</span>
-        <strong>${escapeHtml(item.to)}</strong>
-      </div>`
-      )
-      .join('')}
+    <div class="helper">Renderizacao Mermaid para grafos simples.</div>
+    ${renderMermaidSvg(graph)}
     <details class="section" style="margin-top:10px">
       <summary>Fonte Mermaid</summary>
       <div style="white-space:pre-wrap;margin-top:10px">${escapeHtml(source)}</div>
     </details>
   </div>`;
+}
+
+function parseMermaidGraph(source) {
+  const lines = String(source || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+
+  const header = lines[0].match(/^graph\s+(TD|TB|LR|RL)$/i);
+  const direction = header ? header[1].toUpperCase() : 'TD';
+  const bodyLines = header ? lines.slice(1) : lines;
+  const edges = [];
+  const nodeSet = new Set();
+
+  for (const line of bodyLines) {
+    const match = line.match(/^(.+?)\s*(-->|---|==>)\s*(.+)$/);
+    if (!match) continue;
+    const from = normalizeMermaidNode(match[1]);
+    const to = normalizeMermaidNode(match[3]);
+    if (!from || !to) continue;
+    nodeSet.add(from.id);
+    nodeSet.add(to.id);
+    edges.push({ from: from.id, to: to.id, fromLabel: from.label, toLabel: to.label, arrow: match[2] });
+  }
+
+  if (!edges.length || !nodeSet.size) return null;
+
+  const labels = {};
+  for (const edge of edges) {
+    labels[edge.from] = edge.fromLabel;
+    labels[edge.to] = edge.toLabel;
+  }
+
+  return {
+    direction,
+    nodes: [...nodeSet].map((id) => ({ id, label: labels[id] || id })),
+    edges
+  };
+}
+
+function normalizeMermaidNode(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+  const bracketMatch = raw.match(/^([A-Za-z0-9_]+)\[(.+)\]$/) || raw.match(/^([A-Za-z0-9_]+)\((.+)\)$/);
+  if (bracketMatch) {
+    return { id: bracketMatch[1], label: bracketMatch[2].trim() };
+  }
+  return { id: raw.replace(/\s+/g, '_'), label: raw.replace(/_/g, ' ') };
+}
+
+function renderMermaidSvg(graph) {
+  const horizontal = graph.direction === 'LR' || graph.direction === 'RL';
+  const nodeWidth = 170;
+  const nodeHeight = 56;
+  const gap = 36;
+  const padding = 24;
+  const positions = graph.nodes.map((node, index) => ({
+    ...node,
+    x: horizontal ? padding + index * (nodeWidth + gap) : padding,
+    y: horizontal ? padding : padding + index * (nodeHeight + gap)
+  }));
+
+  const width = horizontal ? padding * 2 + positions.length * nodeWidth + Math.max(0, positions.length - 1) * gap : nodeWidth + padding * 2;
+  const height = horizontal ? nodeHeight + padding * 2 : padding * 2 + positions.length * nodeHeight + Math.max(0, positions.length - 1) * gap;
+  const byId = new Map(positions.map((node) => [node.id, node]));
+
+  const lines = graph.edges
+    .map((edge) => {
+      const from = byId.get(edge.from);
+      const to = byId.get(edge.to);
+      if (!from || !to) return '';
+      const x1 = horizontal ? from.x + nodeWidth : from.x + nodeWidth / 2;
+      const y1 = horizontal ? from.y + nodeHeight / 2 : from.y + nodeHeight;
+      const x2 = horizontal ? to.x : to.x + nodeWidth / 2;
+      const y2 = horizontal ? to.y + nodeHeight / 2 : to.y;
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#c3a76c" stroke-width="3" marker-end="url(#arrow)" />`;
+    })
+    .join('');
+
+  const nodes = positions
+    .map(
+      (node) => `<g>
+      <rect x="${node.x}" y="${node.y}" width="${nodeWidth}" height="${nodeHeight}" rx="14" fill="#221d16" stroke="#8e7754" stroke-width="2"></rect>
+      <text x="${node.x + nodeWidth / 2}" y="${node.y + nodeHeight / 2 + 5}" text-anchor="middle" fill="#eadfc8" font-family="Georgia, serif" font-size="14">${escapeHtml(
+        truncateMermaidLabel(node.label)
+      )}</text>
+    </g>`
+    )
+    .join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;border:1px solid rgba(195,167,108,.12);border-radius:14px;background:#17130f">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#c3a76c"></path>
+      </marker>
+    </defs>
+    ${lines}
+    ${nodes}
+  </svg>`;
+}
+
+function truncateMermaidLabel(label) {
+  const value = String(label || '');
+  return value.length > 18 ? `${value.slice(0, 16)}..` : value;
 }
 
 function getContentFileAccept(table) {
@@ -1859,6 +2020,25 @@ function ensureSelectedDmScreenPage() {
   }
 }
 
+function getCampaignMaps(campaignId) {
+  return [...(state.campaignContent[campaignId]?.maps || [])].sort((left, right) =>
+    String(left.title || '').localeCompare(String(right.title || ''))
+  );
+}
+
+function ensureSelectedMap() {
+  const campaign = getSelectedCampaign();
+  if (!campaign) return;
+  const maps = getCampaignMaps(campaign.id);
+  if (!maps.length) {
+    state.selectedMapId = null;
+    return;
+  }
+  if (!maps.some((map) => map.id === state.selectedMapId)) {
+    state.selectedMapId = maps[0].id;
+  }
+}
+
 function isCurrentUserDm() {
   return state.sync.profile?.role === 'dm';
 }
@@ -1896,6 +2076,8 @@ function updateTags() {
       ? getSelectedSheet()
       : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN
         ? (getSortedDmScreenPages(state.selectedCampaignId || '').find((page) => page.id === state.selectedDmScreenPageId) ?? getSelectedCampaign())
+        : state.campaignMode === CAMPAIGN_MODE_MAPS
+          ? (getCampaignMaps(state.selectedCampaignId || '').find((map) => map.id === state.selectedMapId) ?? getSelectedCampaign())
         : getSelectedCampaign();
   if (el.selectedTag) {
     el.selectedTag.textContent = selected ? selected.name || selected.title : 'Nada selecionado';
@@ -1913,7 +2095,13 @@ function updateTags() {
   }
 
   const workspace =
-    state.view === VIEW_SHEETS ? 'Fichas' : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN ? 'Tela do Mestre' : 'Campanhas';
+    state.view === VIEW_SHEETS
+      ? 'Fichas'
+      : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN
+        ? 'Tela do Mestre'
+        : state.campaignMode === CAMPAIGN_MODE_MAPS
+          ? 'Mapas'
+          : 'Campanhas';
   setStatus(`${isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player'} · ${workspace}`);
 }
 

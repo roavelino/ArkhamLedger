@@ -51,7 +51,7 @@
 | Maps upload/listing | Missing | Implemented | Added upload flow plus rendered map detail cards in the campaign dashboard. |
 | Map pins | Missing | Implemented | Added map pin creation, listing, rendering, and removal in the dashboard. |
 | Markdown rendering | Missing | Implemented | Markdown docs, markdown handouts, and markdown DM pages now render in-app. |
-| Mermaid rendering | Missing | Partial | Mermaid source now has a simplified relationship viewer plus source fallback. |
+| Mermaid rendering | Missing | Implemented | Added in-app graph parsing and SVG rendering for simple Mermaid graph diagrams, with source fallback. |
 | DM screen UI | Missing | Implemented | Added dedicated DM screen viewer with ordered page switching and reference page modes. |
 | File validation | Missing | Partial | Added client-side image/video validation for portraits, campaign covers, and character intro video. |
 | PDF export | Missing | Implemented | Added printable sheet export plus field mapping document. |
@@ -108,6 +108,8 @@
   - character gallery
   - CRUD cards for summaries, timeline, clues, handouts, maps, markdown docs, relationship diagrams, and DM screen pages
 - Added campaign asset uploads and in-app rendering for maps, handouts, clues, markdown, and simplified Mermaid diagrams.
+- Added dedicated campaign map mode for larger player-safe and DM map viewing.
+- Upgraded Mermaid from plain relationship lists to simple SVG graph rendering for Mermaid `graph` diagrams.
 - Added dedicated DM screen viewer with ordered page tabs and quick reference modes.
 - Added browser-printable PDF export for character sheets and a field mapping document.
 - Added soft archive behavior for campaigns, NPCs, clues, and handouts.
@@ -127,4 +129,3 @@
 ## Remaining Work
 
 - Add targeted browser/UI tests for the new campaign flows.
-- Upgrade the Mermaid viewer from simplified relationship rendering to full diagram rendering.
