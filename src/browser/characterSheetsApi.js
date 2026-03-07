@@ -1,5 +1,9 @@
 const IMAGE_BUCKET = 'sheet-images';
 
+function isMissingColumnError(error, columnName) {
+  return error?.code === '42703' && String(error?.message || '').includes(columnName);
+}
+
 export async function fetchProfile(client, userId) {
   const { data, error } = await client
     .from('users')
@@ -12,14 +16,23 @@ export async function fetchProfile(client, userId) {
 }
 
 export async function listCharacterSheets(client) {
-  const { data, error } = await client
+  const initial = await client
     .from('character_sheets')
     .select('*')
     .is('archived_at', null)
     .order('updated_at', { ascending: false });
 
-  if (error) throw error;
-  return data || [];
+  if (!initial.error) {
+    return initial.data || [];
+  }
+
+  if (!isMissingColumnError(initial.error, 'archived_at')) {
+    throw initial.error;
+  }
+
+  const fallback = await client.from('character_sheets').select('*').order('updated_at', { ascending: false });
+  if (fallback.error) throw fallback.error;
+  return fallback.data || [];
 }
 
 export async function upsertCharacterSheet(client, payload) {

@@ -405,6 +405,9 @@ create table if not exists public.clues (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.clues
+  add column if not exists archived_at timestamptz;
+
 create table if not exists public.handouts (
   id uuid primary key default gen_random_uuid(),
   campaign_id uuid not null references public.campaigns(id) on delete cascade,
@@ -418,6 +421,9 @@ create table if not exists public.handouts (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.handouts
+  add column if not exists archived_at timestamptz;
 
 create table if not exists public.maps (
   id uuid primary key default gen_random_uuid(),
