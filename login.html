@@ -37,8 +37,17 @@
       overflow:hidden;
     }
     .head{padding:18px;border-bottom:1px solid rgba(195,167,108,.15)}
+    .head-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
     h1{margin:0;font-size:24px;color:var(--accent)}
     .sub{margin-top:6px;font-size:13px;color:var(--muted)}
+    .lang-select{
+      border-radius:10px;
+      border:1px solid rgba(195,167,108,.2);
+      background:#181511;
+      color:var(--text);
+      padding:8px 10px;
+      font:inherit;
+    }
     .tabs{display:flex;gap:8px;padding:14px;border-bottom:1px solid rgba(195,167,108,.12)}
     .tabs button{
       flex:1;
@@ -90,8 +99,13 @@
 <body>
   <main class="card">
     <header class="head">
-      <h1>Arkham Ledger</h1>
-      <div class="sub">Autenticacao por email e senha</div>
+      <div class="head-top">
+        <div>
+          <h1>Arkham Ledger</h1>
+          <div class="sub" id="loginSubtitle">Autenticacao por email e senha</div>
+        </div>
+        <select id="languageSelect" class="lang-select" aria-label="Language"></select>
+      </div>
     </header>
 
     <div class="tabs">
@@ -104,34 +118,34 @@
 
       <form id="loginForm">
         <div class="field">
-          <label for="loginEmail">Email</label>
+          <label id="loginEmailLabel" for="loginEmail">Email</label>
           <input id="loginEmail" type="email" required />
         </div>
         <div class="field">
-          <label for="loginPassword">Senha</label>
+          <label id="loginPasswordLabel" for="loginPassword">Senha</label>
           <input id="loginPassword" type="password" required />
         </div>
-        <button class="btn" type="submit">Entrar</button>
+        <button class="btn" id="loginSubmitBtn" type="submit">Entrar</button>
       </form>
 
       <form id="signupForm" class="hidden">
         <div class="field">
-          <label for="signupName">Nome (opcional)</label>
+          <label id="signupNameLabel" for="signupName">Nome (opcional)</label>
           <input id="signupName" type="text" />
         </div>
         <div class="field">
-          <label for="signupEmail">Email</label>
+          <label id="signupEmailLabel" for="signupEmail">Email</label>
           <input id="signupEmail" type="email" required />
         </div>
         <div class="field">
-          <label for="signupPassword">Senha</label>
+          <label id="signupPasswordLabel" for="signupPassword">Senha</label>
           <input id="signupPassword" type="password" required />
         </div>
         <div class="field">
-          <label for="signupPasswordConfirm">Confirmar senha</label>
+          <label id="signupPasswordConfirmLabel" for="signupPasswordConfirm">Confirmar senha</label>
           <input id="signupPasswordConfirm" type="password" required />
         </div>
-        <button class="btn" type="submit">Criar conta</button>
+        <button class="btn" id="signupSubmitBtn" type="submit">Criar conta</button>
       </form>
     </section>
   </main>
