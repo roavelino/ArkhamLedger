@@ -23,6 +23,7 @@ export interface CharacterSheet {
   description: string | null;
   intro_video_url: string | null;
   notes: string | null;
+  archived_at: string | null;
   sheet_data: Json;
   image_url: string | null;
   created_at: string;
@@ -39,6 +40,7 @@ export interface CreateCharacterInput {
   description?: string | null;
   intro_video_url?: string | null;
   notes?: string | null;
+  archived_at?: string | null;
   sheet_data: Json;
 }
 
@@ -53,6 +55,7 @@ export interface UpdateCharacterInput {
   description?: string | null;
   intro_video_url?: string | null;
   notes?: string | null;
+  archived_at?: string | null;
   sheet_data?: Json;
   image_url?: string | null;
 }
@@ -148,7 +151,7 @@ export async function deleteCharacterSheet(user: AppUser, sheetId: string): Prom
 }
 
 export async function listCharacterSheets(user: AppUser): Promise<CharacterSheet[]> {
-  const query = supabase.from('character_sheets').select('*').order('updated_at', { ascending: false });
+  const query = supabase.from('character_sheets').select('*').is('archived_at', null).order('updated_at', { ascending: false });
   const { data, error } = user.role === 'dm' ? await query : await query.eq('owner_id', user.id);
 
   if (error) {

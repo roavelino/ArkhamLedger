@@ -26,3 +26,28 @@ test('index.html is GitHub Pages compatible (loads JS entrypoint)', () => {
   assert.match(html, /<script\s+type="module"\s+src="\.\/src\/main\.js"><\/script>/);
   assert.doesNotMatch(html, /src="\.\/src\/main\.ts"/);
 });
+
+test('main browser app exposes DM screen and printable export flows', () => {
+  const src = readFileSync('src/main.js', 'utf8');
+  assert.match(src, /CAMPAIGN_MODE_DM_SCREEN/);
+  assert.match(src, /CAMPAIGN_MODE_MAPS/);
+  assert.match(src, /renderDmScreen\(/);
+  assert.match(src, /renderCampaignMaps\(/);
+  assert.match(src, /exportSheetAsPdf\(/);
+  assert.match(src, /buildPrintableSheetHtml\(/);
+});
+
+test('browser app includes archive handling for campaign content and NPCs', () => {
+  const src = readFileSync('src/main.js', 'utf8');
+  assert.match(src, /Campanha arquivada/);
+  assert.match(src, /NPC arquivado/);
+  assert.match(src, /Item arquivado/);
+  assert.match(src, /archivedAt/);
+});
+
+test('main browser app includes Mermaid graph parsing helpers', () => {
+  const src = readFileSync('src/main.js', 'utf8');
+  assert.match(src, /parseMermaidGraph\(/);
+  assert.match(src, /renderMermaidSvg\(/);
+  assert.match(src, /normalizeMermaidNode\(/);
+});

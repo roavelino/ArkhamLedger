@@ -60,6 +60,7 @@ export interface Database {
           description: string | null;
           intro_video_url: string | null;
           notes: string | null;
+          archived_at: string | null;
           sheet_data: Json;
           image_url: string | null;
           created_at: string;
@@ -78,6 +79,7 @@ export interface Database {
           description?: string | null;
           intro_video_url?: string | null;
           notes?: string | null;
+          archived_at?: string | null;
           sheet_data: Json;
           image_url?: string | null;
           created_at?: string;
@@ -94,6 +96,7 @@ export interface Database {
           description?: string | null;
           intro_video_url?: string | null;
           notes?: string | null;
+          archived_at?: string | null;
           sheet_data?: Json;
           image_url?: string | null;
           updated_at?: string;
@@ -157,10 +160,12 @@ export interface Database {
         image_url: string | null;
         file_url: string | null;
         status: 'hidden' | 'available' | 'found';
+        archived_at: string | null;
       }>;
       handouts: CampaignContentTable<'content_text', {
         type: 'text' | 'markdown' | 'image' | 'pdf';
         file_url: string | null;
+        archived_at: string | null;
       }>;
       maps: CampaignContentTable<'image_url', {
         description: string | null;
