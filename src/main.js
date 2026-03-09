@@ -30,6 +30,7 @@ import {
   upsertCampaignMember,
   deleteCampaignContentRow
 } from './browser/campaignApi.js';
+import { getStoredLocale, setCurrentLocale, translate } from './i18n.js';
 
 const STORAGE_KEY = 'arkham-ledger:sheets:v2';
 const VIEW_SHEETS = 'sheets';
@@ -48,90 +49,92 @@ function isMissingColumnError(error, columnName) {
   return error?.code === '42703' && String(error?.message || '').includes(columnName);
 }
 
-const CONTENT_DEFINITIONS = [
-  {
-    table: 'session_summaries',
-    label: 'Resumos de Sessao',
-    bodyKey: 'summary_markdown',
-    bodyLabel: 'Resumo em markdown',
-    supportsFile: false,
-    supportsType: false,
-    supportsStatus: false
-  },
-  {
-    table: 'timeline_entries',
-    label: 'Linha do Tempo',
-    bodyKey: 'description',
-    bodyLabel: 'Descricao',
-    supportsFile: false,
-    supportsType: true,
-    typeLabel: 'Tipo do evento',
-    supportsStatus: false
-  },
-  {
-    table: 'clues',
-    label: 'Pistas',
-    bodyKey: 'description',
-    bodyLabel: 'Descricao',
-    supportsFile: true,
-    fileLabel: 'Imagem ou PDF',
-    supportsType: false,
-    supportsStatus: true
-  },
-  {
-    table: 'handouts',
-    label: 'Handouts',
-    bodyKey: 'content_text',
-    bodyLabel: 'Conteudo',
-    supportsFile: true,
-    fileLabel: 'Arquivo opcional',
-    supportsType: true,
-    typeLabel: 'Tipo',
-    typeOptions: ['text', 'markdown', 'image', 'pdf'],
-    supportsStatus: false
-  },
-  {
-    table: 'maps',
-    label: 'Mapas',
-    bodyKey: 'description',
-    bodyLabel: 'Descricao',
-    supportsFile: true,
-    fileLabel: 'Imagem do mapa',
-    fileKey: 'image_url',
-    supportsType: false,
-    supportsStatus: false
-  },
-  {
-    table: 'markdown_documents',
-    label: 'Documentos Markdown',
-    bodyKey: 'markdown_content',
-    bodyLabel: 'Markdown',
-    supportsFile: false,
-    supportsType: false,
-    supportsStatus: false
-  },
-  {
-    table: 'relationship_diagrams',
-    label: 'Diagramas',
-    bodyKey: 'mermaid_source',
-    bodyLabel: 'Codigo Mermaid',
-    supportsFile: false,
-    supportsType: false,
-    supportsStatus: false
-  },
-  {
-    table: 'dm_screen_pages',
-    label: 'Tela do Mestre',
-    bodyKey: 'content_json_or_text',
-    bodyLabel: 'Conteudo',
-    supportsFile: false,
-    supportsType: true,
-    typeLabel: 'Tipo de pagina',
-    typeOptions: ['markdown', 'quick rules', 'session notes', 'npc list reference', 'clue list reference'],
-    supportsStatus: false,
-    supportsSort: true
-  }
-];
+function getContentDefinitions() {
+  return [
+    {
+      table: 'session_summaries',
+      label: 'Resumos de Sessao',
+      bodyKey: 'summary_markdown',
+      bodyLabel: 'Resumo em markdown',
+      supportsFile: false,
+      supportsType: false,
+      supportsStatus: false
+    },
+    {
+      table: 'timeline_entries',
+      label: 'Linha do Tempo',
+      bodyKey: 'description',
+      bodyLabel: 'Descricao',
+      supportsFile: false,
+      supportsType: true,
+      typeLabel: 'Tipo do evento',
+      supportsStatus: false
+    },
+    {
+      table: 'clues',
+      label: 'Pistas',
+      bodyKey: 'description',
+      bodyLabel: 'Descricao',
+      supportsFile: true,
+      fileLabel: 'Imagem ou PDF',
+      supportsType: false,
+      supportsStatus: true
+    },
+    {
+      table: 'handouts',
+      label: 'Handouts',
+      bodyKey: 'content_text',
+      bodyLabel: 'Conteudo',
+      supportsFile: true,
+      fileLabel: 'Arquivo opcional',
+      supportsType: true,
+      typeLabel: 'Tipo',
+      typeOptions: ['text', 'markdown', 'image', 'pdf'],
+      supportsStatus: false
+    },
+    {
+      table: 'maps',
+      label: 'Mapas',
+      bodyKey: 'description',
+      bodyLabel: 'Descricao',
+      supportsFile: true,
+      fileLabel: 'Imagem do mapa',
+      fileKey: 'image_url',
+      supportsType: false,
+      supportsStatus: false
+    },
+    {
+      table: 'markdown_documents',
+      label: 'Documentos Markdown',
+      bodyKey: 'markdown_content',
+      bodyLabel: 'Markdown',
+      supportsFile: false,
+      supportsType: false,
+      supportsStatus: false
+    },
+    {
+      table: 'relationship_diagrams',
+      label: 'Diagramas',
+      bodyKey: 'mermaid_source',
+      bodyLabel: 'Codigo Mermaid',
+      supportsFile: false,
+      supportsType: false,
+      supportsStatus: false
+    },
+    {
+      table: 'dm_screen_pages',
+      label: 'Tela do Mestre',
+      bodyKey: 'content_json_or_text',
+      bodyLabel: 'Conteudo',
+      supportsFile: false,
+      supportsType: true,
+      typeLabel: 'Tipo de pagina',
+      typeOptions: ['markdown', 'quick rules', 'session notes', 'npc list reference', 'clue list reference'],
+      supportsStatus: false,
+      supportsSort: true
+    }
+  ];
+}
 
 const state = {
   view: VIEW_SHEETS,
@@ -176,12 +179,18 @@ const el = {
   topActions: document.querySelector('.toolbar .top-actions:last-child'),
   sidebarControls: document.querySelector('.sidebar-controls'),
   toast: document.getElementById('toast'),
-  brandSub: document.querySelector('.brand .sub')
+  brandSub: document.querySelector('.brand .sub'),
+  languageSelect: document.getElementById('languageSelect'),
+  printHintText: document.getElementById('printHintText')
 };
+
+let locale = setCurrentLocale(getStoredLocale());
 
 void initialize();
 
 async function initialize() {
+  applyLocale();
+
   try {
     state.sync.client = createRuntimeBrowserClient();
   } catch (error) {
@@ -219,41 +228,47 @@ function injectToolbarButtons() {
   viewSwitch.className = 'top-actions';
   viewSwitch.id = 'viewSwitch';
   viewSwitch.innerHTML = `
-    <button class="btn secondary" id="switchSheetsBtn" type="button">Fichas</button>
-    <button class="btn secondary" id="switchCampaignsBtn" type="button">Campanhas</button>
+    <button class="btn secondary" id="switchSheetsBtn" type="button">${translate('app.workspace.sheets', {}, locale)}</button>
+    <button class="btn secondary" id="switchCampaignsBtn" type="button">${translate('app.workspace.campaigns', {}, locale)}</button>
   `;
   el.topTags.prepend(viewSwitch);
 
   const saveButton = document.createElement('button');
   saveButton.className = 'btn ok';
   saveButton.id = 'saveSheetBtn';
-  saveButton.textContent = 'Salvar';
+  saveButton.textContent = translate('app.save', {}, locale);
   el.topActions.prepend(saveButton);
   el.saveSheetBtn = saveButton;
 
   const pdfButton = document.createElement('button');
   pdfButton.className = 'btn secondary';
   pdfButton.id = 'exportPdfBtn';
-  pdfButton.textContent = 'PDF';
+  pdfButton.textContent = translate('app.pdf', {}, locale);
   el.topActions.prepend(pdfButton);
   el.exportPdfBtn = pdfButton;
 
   const toggleButton = document.createElement('button');
   toggleButton.className = 'btn ghost';
   toggleButton.id = 'toggleActiveBtn';
-  toggleButton.textContent = 'Inativar';
+  toggleButton.textContent = translate('app.deactivate', {}, locale);
   el.topActions.prepend(toggleButton);
   el.toggleActiveBtn = toggleButton;
 
   const logoutButton = document.createElement('button');
   logoutButton.className = 'btn ghost';
   logoutButton.id = 'logoutBtn';
-  logoutButton.textContent = 'Sair';
+  logoutButton.textContent = translate('app.logout', {}, locale);
   el.topTags.appendChild(logoutButton);
   el.logoutBtn = logoutButton;
 }
 
 function bindEvents() {
+  el.languageSelect?.addEventListener('change', (event) => {
+    locale = setCurrentLocale(event.target.value);
+    applyLocale();
+    render();
+  });
+
   document.getElementById('switchSheetsBtn')?.addEventListener('click', () => {
     state.view = VIEW_SHEETS;
     render();
@@ -278,7 +293,7 @@ function bindEvents() {
     }
 
     if (!canCreateSheet()) {
-      showToast('Players so podem criar ficha sem personagem ativo.');
+      showToast(translate('app.playerCreateBlocked', {}, locale));
       return;
     }
 
@@ -305,7 +320,7 @@ function bindEvents() {
     state.selectedId = generated.id;
     state.dirty = true;
     render();
-    showToast('Rascunho de NPC gerado');
+    showToast(translate('app.generatedNpc', {}, locale));
   });
 
   el.saveSheetBtn?.addEventListener('click', async () => {
@@ -410,7 +425,7 @@ function bindEvents() {
         members: state.campaignMembers[campaign.id] || [],
         content: state.campaignContent[campaign.id] || {}
       });
-      showToast('Campanha exportada');
+      showToast(translate('app.exportedCampaign', {}, locale));
       return;
     }
 
@@ -418,7 +433,7 @@ function bindEvents() {
     if (!selected) return;
 
     downloadJson(`${slugify(selected.name)}.json`, selected);
-    showToast('Ficha exportada');
+    showToast(translate('app.exportedSheet', {}, locale));
   });
 
   el.exportPdfBtn?.addEventListener('click', async () => {
@@ -506,6 +521,7 @@ async function ensureNpcGalleryLoaded() {
 }
 
 function render() {
+  applyLocale();
   renderSidebarControls();
   renderList();
   renderMain();
@@ -513,27 +529,50 @@ function render() {
   updateActionVisibility();
 }
 
+function applyLocale() {
+  document.documentElement.lang = locale;
+  document.title = translate('app.title', {}, locale);
+  if (el.languageSelect) {
+    el.languageSelect.innerHTML = `
+      <option value="pt-BR">${translate('lang.pt-BR', {}, locale)}</option>
+      <option value="en">${translate('lang.en', {}, locale)}</option>
+    `;
+    el.languageSelect.value = locale;
+  }
+  if (el.printHintText) {
+    el.printHintText.textContent = translate('app.footerHint', {}, locale);
+  }
+  if (el.duplicateBtn) el.duplicateBtn.textContent = translate('app.duplicate', {}, locale);
+  if (el.exportBtn) el.exportBtn.textContent = translate('app.downloadJson', {}, locale);
+  if (el.deleteBtn) el.deleteBtn.textContent = translate('app.delete', {}, locale);
+  if (el.saveSheetBtn) el.saveSheetBtn.textContent = translate('app.save', {}, locale);
+  if (el.exportPdfBtn) el.exportPdfBtn.textContent = translate('app.pdf', {}, locale);
+  if (el.logoutBtn) el.logoutBtn.textContent = translate('app.logout', {}, locale);
+  document.getElementById('switchSheetsBtn')?.replaceChildren(document.createTextNode(translate('app.workspace.sheets', {}, locale)));
+  document.getElementById('switchCampaignsBtn')?.replaceChildren(document.createTextNode(translate('app.workspace.campaigns', {}, locale)));
+}
+
 function renderSidebarControls() {
   if (!el.newSheetBtn || !el.importBtn || !el.exportAllBtn || !el.brandSub) return;
 
   if (state.view === VIEW_CAMPAIGNS) {
-    el.brandSub.textContent = 'Campanhas, jogadores e investigacao';
-    el.newSheetBtn.textContent = 'Nova campanha';
+    el.brandSub.textContent = translate('app.brandSub.campaignsWorkspace', {}, locale);
+    el.newSheetBtn.textContent = translate('app.newCampaign', {}, locale);
     el.newSheetBtn.classList.toggle('hidden', !isCurrentUserDm());
     el.importBtn.classList.add('hidden');
     el.exportAllBtn.classList.add('hidden');
-    el.sheetSearch.placeholder = 'Buscar campanha...';
+    el.sheetSearch.placeholder = translate('app.searchCampaigns', {}, locale);
     return;
   }
 
-  el.brandSub.textContent = 'Fichas, NPCs e revelacoes';
-  el.newSheetBtn.textContent = 'Nova ficha';
+  el.brandSub.textContent = translate('app.brandSub.sheetsWorkspace', {}, locale);
+  el.newSheetBtn.textContent = translate('app.newSheet', {}, locale);
   el.newSheetBtn.classList.remove('hidden');
-  el.importBtn.textContent = 'NPC rapido';
-  el.exportAllBtn.textContent = 'Gerar NPC';
+  el.importBtn.textContent = translate('app.quickNpc', {}, locale);
+  el.exportAllBtn.textContent = translate('app.generateNpc', {}, locale);
   el.importBtn.classList.toggle('hidden', !isCurrentUserDm());
   el.exportAllBtn.classList.toggle('hidden', !isCurrentUserDm());
-  el.sheetSearch.placeholder = 'Buscar ficha...';
+  el.sheetSearch.placeholder = translate('app.searchSheets', {}, locale);
 }
 
 function renderList() {
@@ -559,7 +598,7 @@ function renderList() {
     item.type = 'button';
     item.innerHTML = `<div class="title">${escapeHtml(sheet.name)}</div>
       <div class="meta">
-        <span>${sheet.type === 'npc' ? 'NPC' : 'Investigador'}</span>
+        <span>${sheetTypeLabel(sheet.type)}</span>
         <span>${escapeHtml(sheet.occupation || 'Sem ocupacao')}</span>
         <span>${escapeHtml(getCampaignTitle(sheet.campaignId) || 'Sem campanha')}</span>
       </div>`;
@@ -642,7 +681,7 @@ function renderSheet() {
   el.viewRoot.innerHTML = `<article class="sheet-card" style="width:min(1200px,100%)">
     <header class="card-header">
       <h2>${escapeHtml(selected.name)}</h2>
-      <div class="subtitle">${selected.type === 'npc' ? 'NPC' : 'Investigador'} · ${selected.isActive ? 'Ativa' : 'Inativa'}</div>
+      <div class="subtitle">${sheetTypeLabel(selected.type)} · ${activeStateLabel(selected.isActive)}</div>
     </header>
     <div class="sheet-body">
       <section class="section">
@@ -664,8 +703,8 @@ function renderSheet() {
           <div class="field">
             <label>Tipo</label>
             <select id="fieldType" ${!isCurrentUserDm() ? 'disabled' : ''}>
-              <option value="player_character" ${selected.type === 'player_character' ? 'selected' : ''}>Investigador</option>
-              <option value="npc" ${selected.type === 'npc' ? 'selected' : ''}>NPC</option>
+              <option value="player_character" ${selected.type === 'player_character' ? 'selected' : ''}>${translate('common.investigator', {}, locale)}</option>
+              <option value="npc" ${selected.type === 'npc' ? 'selected' : ''}>${translate('common.npc', {}, locale)}</option>
             </select>
           </div>
           <div class="field">
@@ -1022,7 +1061,7 @@ function renderCampaign() {
       </div>
     </article>
 
-    ${CONTENT_DEFINITIONS.map((definition) => renderContentSection(selected.id, definition, content[definition.table] || [], editable)).join('')}
+    ${getContentDefinitions().map((definition) => renderContentSection(selected.id, definition, content[definition.table] || [], editable)).join('')}
   </div>`;
 
   bindCampaignFields(selected.id);
@@ -1203,10 +1242,10 @@ function renderGalleryCard(sheet) {
   const image = sheet.imagePreviewUrl || sheet.imageSignedUrl;
   return `<button class="section" type="button" data-open-sheet="${escapeAttribute(sheet.id)}" style="text-align:left">
     <div class="row">
-      <div class="portrait-preview" style="width:92px;aspect-ratio:3/4;flex:none">${image ? `<img src="${escapeAttribute(image)}" alt="">` : '<span>Sem retrato</span>'}</div>
+      <div class="portrait-preview" style="width:92px;aspect-ratio:3/4;flex:none">${image ? `<img src="${escapeAttribute(image)}" alt="">` : `<span>${translate('pdf.noPortrait', {}, locale)}</span>`}</div>
       <div>
         <h3>${escapeHtml(sheet.name)}</h3>
-        <div class="helper">${sheet.type === 'npc' ? 'NPC' : 'Investigador'}</div>
+        <div class="helper">${sheetTypeLabel(sheet.type)}</div>
         <div class="small">${escapeHtml(sheet.description || sheet.occupation || 'Sem resumo')}</div>
       </div>
     </div>
@@ -1405,7 +1444,7 @@ function bindCampaignFields(campaignId) {
   for (const button of document.querySelectorAll('[data-save-content]')) {
     button.addEventListener('click', async () => {
       const table = button.getAttribute('data-save-content');
-      const definition = CONTENT_DEFINITIONS.find((item) => item.table === table);
+      const definition = getContentDefinitions().find((item) => item.table === table);
       if (!definition) return;
 
       const title = document.querySelector(`[data-content-title="${table}"]`)?.value?.trim() || '';
@@ -2012,7 +2051,9 @@ function updateActionVisibility() {
     el.toggleActiveBtn.classList.toggle('hidden', !editingSheet || !isCurrentUserDm());
     el.toggleActiveBtn.disabled = !(editingSheet && isCurrentUserDm() && selected);
     if (selected) {
-      el.toggleActiveBtn.textContent = selected.isActive ? 'Inativar' : 'Ativar';
+      el.toggleActiveBtn.textContent = selected.isActive
+        ? translate('app.deactivate', {}, locale)
+        : translate('app.activate', {}, locale);
     }
   }
   if (el.duplicateBtn) {
@@ -2114,29 +2155,29 @@ function updateTags() {
           ? (getCampaignMaps(state.selectedCampaignId || '').find((map) => map.id === state.selectedMapId) ?? getSelectedCampaign())
         : getSelectedCampaign();
   if (el.selectedTag) {
-    el.selectedTag.textContent = selected ? selected.name || selected.title : 'Nada selecionado';
+    el.selectedTag.textContent = selected ? selected.name || selected.title : translate('app.noneSelected', {}, locale);
   }
 
   if (el.autosaveTag) {
     const dirty = state.view === VIEW_SHEETS ? state.dirty : state.campaignDirty;
     if (!state.sync.connected) {
-      el.autosaveTag.textContent = 'Sem sessao';
+      el.autosaveTag.textContent = translate('app.noSession', {}, locale);
     } else if (dirty) {
-      el.autosaveTag.textContent = 'Alteracoes pendentes';
+      el.autosaveTag.textContent = translate('app.pendingChanges', {}, locale);
     } else {
-      el.autosaveTag.textContent = 'Tudo salvo';
+      el.autosaveTag.textContent = translate('app.allSaved', {}, locale);
     }
   }
 
   const workspace =
     state.view === VIEW_SHEETS
-      ? 'Fichas'
+      ? translate('app.workspace.sheets', {}, locale)
       : state.campaignMode === CAMPAIGN_MODE_DM_SCREEN
-        ? 'Tela do Mestre'
+        ? translate('app.workspace.dmScreen', {}, locale)
         : state.campaignMode === CAMPAIGN_MODE_MAPS
-          ? 'Mapas'
-          : 'Campanhas';
-  setStatus(`${isCurrentUserDm() ? 'Perfil DM' : 'Perfil Player'} · ${workspace}`);
+          ? translate('app.workspace.maps', {}, locale)
+          : translate('app.workspace.campaigns', {}, locale);
+  setStatus(`${isCurrentUserDm() ? translate('app.role.dm', {}, locale) : translate('app.role.player', {}, locale)} · ${workspace}`);
 }
 
 function setStatus(message) {
@@ -2435,6 +2476,14 @@ function showToast(message) {
 }
 showToast.timer = 0;
 
+function sheetTypeLabel(type) {
+  return type === 'npc' ? translate('common.npc', {}, locale) : translate('common.investigator', {}, locale);
+}
+
+function activeStateLabel(isActive) {
+  return isActive ? translate('common.active', {}, locale) : translate('common.inactive', {}, locale);
+}
+
 function renderSheetImage(sheet) {
   const imageUrl = sheet.imagePreviewUrl || sheet.imageSignedUrl;
 
@@ -2443,7 +2492,7 @@ function renderSheetImage(sheet) {
   }
 
   if (!imageUrl) {
-    return '<span>Sem retrato cadastrado</span>';
+    return `<span>${translate('pdf.noPortraitRegistered', {}, locale)}</span>`;
   }
 
   return `<img src="${escapeAttribute(imageUrl)}" alt="Retrato de ${escapeAttribute(sheet.name)}">`;
@@ -2506,17 +2555,25 @@ function releaseVideoPreviewUrl(sheet) {
 }
 
 async function exportSheetAsPdf(sheet) {
-  const imageUrl = await resolveSheetImageForPrint(sheet);
   const popup = window.open('', '_blank', 'noopener,noreferrer');
   if (!popup) {
-    showToast('Nao foi possivel abrir a janela de impressao.');
+    showToast(translate('app.pdfOpenError', {}, locale));
     return;
   }
 
-  popup.document.write(buildPrintableSheetHtml(sheet, imageUrl));
+  popup.document.write(buildPrintableLoadingHtml());
   popup.document.close();
-  popup.focus();
-  popup.print();
+
+  try {
+    const imageUrl = await resolveSheetImageForPrint(sheet);
+    popup.document.open();
+    popup.document.write(buildPrintableSheetHtml(sheet, imageUrl));
+    popup.document.close();
+    popup.focus();
+  } catch (error) {
+    popup.close();
+    showToast(error?.message || translate('app.pdfRenderError', {}, locale));
+  }
 }
 
 async function resolveSheetImageForPrint(sheet) {
@@ -2543,10 +2600,10 @@ function buildPrintableSheetHtml(sheet, imageUrl) {
     .join('');
 
   return `<!DOCTYPE html>
-  <html lang="pt-BR">
+  <html lang="${escapeAttribute(locale)}">
   <head>
     <meta charset="UTF-8">
-    <title>${escapeHtml(sheet.name)} | Arkham Ledger PDF</title>
+    <title>${escapeHtml(sheet.name)} | ${translate('pdf.titleSuffix', {}, locale)}</title>
     <style>
       body{font-family:Georgia,"Times New Roman",serif;color:#111;margin:32px;background:#fff}
       h1,h2,h3{margin:0 0 10px}
@@ -2563,36 +2620,60 @@ function buildPrintableSheetHtml(sheet, imageUrl) {
       .notes{white-space:pre-wrap;line-height:1.5}
       @media print{body{margin:16px}}
     </style>
+    <script>
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          window.focus();
+          window.print();
+        }, 80);
+      }, { once: true });
+    </script>
   </head>
   <body>
     <div class="head">
-      <div class="portrait">${imageUrl ? `<img src="${escapeAttribute(imageUrl)}" alt="">` : '<span>Sem retrato</span>'}</div>
+      <div class="portrait">${imageUrl ? `<img src="${escapeAttribute(imageUrl)}" alt="">` : `<span>${translate('pdf.noPortrait', {}, locale)}</span>`}</div>
       <div>
         <h1>${escapeHtml(sheet.name)}</h1>
-        <div>${escapeHtml(sheet.type === 'npc' ? 'NPC' : 'Investigador')}</div>
+        <div>${escapeHtml(sheetTypeLabel(sheet.type))}</div>
         <div class="meta">
-          <div class="box"><div class="label">Idade</div>${sheet.age ?? '-'}</div>
-          <div class="box"><div class="label">Ocupacao</div>${escapeHtml(sheet.occupation || '-')}</div>
-          <div class="box"><div class="label">Origem</div>${escapeHtml(sheet.home || '-')}</div>
-          <div class="box"><div class="label">Campanha</div>${escapeHtml(getCampaignTitle(sheet.campaignId) || '-')}</div>
+          <div class="box"><div class="label">${translate('pdf.age', {}, locale)}</div>${sheet.age ?? '-'}</div>
+          <div class="box"><div class="label">${translate('pdf.occupation', {}, locale)}</div>${escapeHtml(sheet.occupation || '-')}</div>
+          <div class="box"><div class="label">${translate('pdf.origin', {}, locale)}</div>${escapeHtml(sheet.home || '-')}</div>
+          <div class="box"><div class="label">${translate('pdf.campaign', {}, locale)}</div>${escapeHtml(getCampaignTitle(sheet.campaignId) || '-')}</div>
         </div>
       </div>
     </div>
     <div class="section">
-      <h2>Descricao</h2>
-      <div class="box notes">${escapeHtml(sheet.description || 'Sem descricao.')}</div>
+      <h2>${translate('pdf.description', {}, locale)}</h2>
+      <div class="box notes">${escapeHtml(sheet.description || translate('pdf.noDescription', {}, locale))}</div>
     </div>
     <div class="section">
-      <h2>Pericias</h2>
+      <h2>${translate('pdf.skills', {}, locale)}</h2>
       <table>
-        <thead><tr><th>Pericia</th><th>Base</th><th>Atual</th><th>Dif</th><th>Ext</th></tr></thead>
+        <thead><tr><th>${translate('pdf.skill', {}, locale)}</th><th>${translate('pdf.base', {}, locale)}</th><th>${translate('pdf.current', {}, locale)}</th><th>${translate('pdf.hard', {}, locale)}</th><th>${translate('pdf.extreme', {}, locale)}</th></tr></thead>
         <tbody>${skills}</tbody>
       </table>
     </div>
     <div class="section">
-      <h2>Anotacoes</h2>
-      <div class="box notes">${escapeHtml(sheet.notes || 'Sem anotacoes.')}</div>
+      <h2>${translate('pdf.notes', {}, locale)}</h2>
+      <div class="box notes">${escapeHtml(sheet.notes || translate('pdf.noNotes', {}, locale))}</div>
     </div>
+  </body>
+  </html>`;
+}
+
+function buildPrintableLoadingHtml() {
+  return `<!DOCTYPE html>
+  <html lang="${escapeAttribute(locale)}">
+  <head>
+    <meta charset="UTF-8">
+    <title>${translate('pdf.loading', {}, locale)}</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;background:#f6f2ea;color:#2b241a}
+    </style>
+  </head>
+  <body>
+    <div>${translate('pdf.loading', {}, locale)}</div>
   </body>
   </html>`;
 }

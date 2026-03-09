@@ -35,3 +35,7 @@ test('fallback includes raw supabase message', () => {
   const message = authErrorToMessage({ message: 'Unexpected error from provider' }, 'Falha geral');
   assert.equal(message, 'Falha geral: Unexpected error from provider');
 });
+
+test('english signin success message', () => {
+  assert.equal(signinSuccessMessage('en'), 'Signed in successfully.');
+});

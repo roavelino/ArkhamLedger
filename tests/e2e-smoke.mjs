@@ -138,8 +138,25 @@ test('login page loads and signup tab toggles', async () => {
   await page.close();
 });
 
+test('login page can switch to english and persists selection on reload', async () => {
+  const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${port}/login.html`);
+
+  await page.selectOption('#languageSelect', 'en');
+  await page.waitForFunction(() => document.querySelector('#loginTab')?.textContent === 'Sign in');
+  assert.equal(await page.textContent('#signupTab'), 'Create account');
+
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#loginTab')?.textContent === 'Sign in');
+  assert.equal(await page.textContent('#loginSubmitBtn'), 'Sign in');
+
+  await page.close();
+});
+
 test('index page redirects unauthenticated users to login', async () => {
   const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${port}/login.html`);
+  await page.evaluate(() => localStorage.clear());
   await page.goto(`http://127.0.0.1:${port}/index.html`);
   await page.waitForURL(`http://127.0.0.1:${port}/login.html`);
   assert.match(page.url(), /\/login\.html$/);

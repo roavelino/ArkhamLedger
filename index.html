@@ -121,6 +121,9 @@
       font:inherit;
       outline:none;
     }
+    .lang-select{
+      min-width:88px;
+    }
     input:focus, select:focus, textarea:focus{
       border-color:rgba(195,167,108,.45);
       box-shadow:0 0 0 3px rgba(195,167,108,.08);
@@ -599,7 +602,7 @@
     <aside class="sidebar">
       <div class="brand">
         <h1>Arkham Ledger</h1>
-        <div class="sub">Fichas de Investigadores · CoC</div>
+        <div class="sub" id="brandSubtext">Fichas de Investigadores · CoC</div>
       </div>
 
       <div class="sidebar-controls">
@@ -621,7 +624,9 @@
 
       <div class="footer-note">
         <div class="print-hint">
+          <span id="printHintText">
           Dica: exporte a ficha como JSON para compartilhar. Para imprimir, use o menu do navegador.
+          </span>
         </div>
       </div>
     </aside>
@@ -637,6 +642,7 @@
           <button class="btn secondary" id="duplicateBtn">Duplicar</button>
           <button class="btn ghost" id="exportBtn">Download JSON</button>
           <button class="btn danger" id="deleteBtn">Excluir</button>
+          <select id="languageSelect" class="lang-select" aria-label="Language"></select>
         </div>
       </div>
 

@@ -35,6 +35,8 @@ test('main browser app exposes DM screen and printable export flows', () => {
   assert.match(src, /renderCampaignMaps\(/);
   assert.match(src, /exportSheetAsPdf\(/);
   assert.match(src, /buildPrintableSheetHtml\(/);
+  assert.match(src, /buildPrintableLoadingHtml\(/);
+  assert.match(src, /window\.open\('', '_blank'/);
 });
 
 test('browser app includes archive handling for campaign content and NPCs', () => {
@@ -50,4 +52,16 @@ test('main browser app includes Mermaid graph parsing helpers', () => {
   assert.match(src, /parseMermaidGraph\(/);
   assert.match(src, /renderMermaidSvg\(/);
   assert.match(src, /normalizeMermaidNode\(/);
+});
+
+test('browser entrypoints expose language switch and shared i18n support', () => {
+  const indexHtml = readFileSync('index.html', 'utf8');
+  const loginHtml = readFileSync('login.html', 'utf8');
+  const loginSrc = readFileSync('src/login.js', 'utf8');
+  const i18nSrc = readFileSync('src/i18n.js', 'utf8');
+
+  assert.match(indexHtml, /id="languageSelect"/);
+  assert.match(loginHtml, /id="languageSelect"/);
+  assert.match(loginSrc, /applyTranslations\(/);
+  assert.match(i18nSrc, /DEFAULT_LOCALE = 'pt-BR'/);
 });

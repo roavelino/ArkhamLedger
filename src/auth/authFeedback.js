@@ -1,34 +1,36 @@
-export function authErrorToMessage(error, fallbackPrefix = 'Erro de autenticacao') {
+import { translate } from '../i18n.js';
+
+export function authErrorToMessage(error, fallbackPrefix = translate('auth.genericFallback'), locale) {
   const raw = String(error?.message || '').trim();
   if (!raw) return `${fallbackPrefix}.`;
 
   const normalized = raw.toLowerCase();
   if (normalized.includes('invalid login credentials')) {
-    return 'Email ou senha incorretos. (Supabase: Invalid login credentials)';
+    return translate('auth.invalidCredentials', {}, locale);
   }
   if (normalized.includes('email not confirmed')) {
-    return 'Conta aguardando confirmacao de email. (Supabase: Email not confirmed)';
+    return translate('auth.emailNotConfirmed', {}, locale);
   }
   if (normalized.includes('user already registered')) {
-    return 'Ja existe uma conta com este email. (Supabase: User already registered)';
+    return translate('auth.userExists', {}, locale);
   }
   if (normalized.includes('password should be at least')) {
-    return `Senha invalida. (${raw})`;
+    return translate('auth.invalidPassword', { message: raw }, locale);
   }
 
   return `${fallbackPrefix}: ${raw}`;
 }
 
-export function signupSuccessMessage(result) {
+export function signupSuccessMessage(result, locale) {
   if (result?.session && result?.user) {
-    return 'Conta criada com login automatico.';
+    return translate('auth.signupAuto', {}, locale);
   }
   if (result?.user && !result?.session) {
-    return 'Conta criada. Aguardando confirmacao de email.';
+    return translate('auth.signupPending', {}, locale);
   }
-  return 'Conta criada.';
+  return translate('auth.signupDone', {}, locale);
 }
 
-export function signinSuccessMessage() {
-  return 'Login realizado com sucesso.';
+export function signinSuccessMessage(locale) {
+  return translate('auth.signinSuccess', {}, locale);
 }
